@@ -1,0 +1,2 @@
+128 × 128 instead of “128 × 128 × 3 as done in previous work”
+multiple images

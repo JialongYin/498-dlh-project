@@ -12,13 +12,15 @@ from torch import optim
 from torch.utils.data import DataLoader
 import matplotlib.pyplot as plt
 import torchvision.utils as vutils
+import matplotlib.animation as animation
+from IPython.display import HTML
 
 from data import Dataset, collate_wrapper
 from model import Generator, Discriminator
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=2, help='Number of epochs for training')
+    parser.add_argument('--epochs', type=int, default=1, help='Number of epochs for training')
     parser.add_argument('--every_n_epoch', type=int, default=1)
     parser.add_argument('--batch_size', type=int, default=4, help="Batch size (default=32)")
     parser.add_argument('--learning_rate', type=float, default=5e-4)
@@ -41,12 +43,13 @@ def get_args():
     return args
 
 def run_training(args, dataset, train_loader):
+    checkpoint_path = os.path.join(args.checkpoint_path, args.checkpoint)
     ngpu = torch.cuda.device_count()
     device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
     # Create the generator
-    netG = Generator(ngpu).to(device)
+    netG = Generator(vocab_size=dataset.vocab_size).to(device)
     # Create the Discriminator
-    netD = Discriminator(ngpu, dataset.vocab_size).to(device)
+    netD = Discriminator(vocab_size=dataset.vocab_size).to(device)
     # Handle multi-gpu if desired
     if (device.type == 'cuda') and (ngpu > 1):
         print("Let's use", ngpu, "GPUs!")
@@ -61,6 +64,9 @@ def run_training(args, dataset, train_loader):
     # Create batch of latent vectors that we will use to visualize
     #  the progression of the generator
     fixed_noise = torch.randn(64, nz, 1, 1, device=device)
+    fixed_clss = torch.zeros((64, 14))
+    # fixed_clss[:, [1, 3, 9]] = 1
+    fixed_clss[:, [8]] = 1
     # Establish convention for real and fake labels during training
     real_label = 1.
     fake_label = 0.
@@ -83,7 +89,7 @@ def run_training(args, dataset, train_loader):
             ############################
             # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
             ###########################
-            print("(1) Update D network")
+            # print("(1) Update D network")
             ## Train with all-real batch
             netD.zero_grad()
             # Format batch
@@ -93,15 +99,14 @@ def run_training(args, dataset, train_loader):
             # Forward pass real batch through D
             output_imgs, output_rpts, output_joint = netD(real_imgs, real_rpts, real_clss)
             # Calculate loss on all-real batch
-            # errD_rpts = criterion(output_rpts, label)
+            errD_rpts = criterion(output_rpts, label)
             errD_imgs = criterion(output_imgs, label)
-            # errD_joint = criterion(output_joint, label)
-            errD_real = errD_imgs #+ errD_rpts + errD_joint
+            errD_joint = criterion(output_joint, label)
+            errD_real = errD_imgs + errD_rpts + errD_joint
             # Calculate gradients for D in backward pass
             errD_real.backward()
-            D_x = output_imgs.mean().item() #+ output_rpts.mean().item() + output_joint.mean().item()
+            D_x = output_imgs.mean().item() + output_rpts.mean().item() + output_joint.mean().item()
 
-            print("Train with all-fake batch")
             ## Train with all-fake batch
             # Generate batch of latent vectors
             noise = torch.randn(b_size, nz, 1, 1, device=device)
@@ -109,12 +114,15 @@ def run_training(args, dataset, train_loader):
             fake_imgs, fake_rpts = netG(noise, real_clss)
             label.fill_(fake_label)
             # Classify all fake batch with D
-            output_imgs, output_rpts, output_joint = netD(fake_imgs.detach(), fake_rpts, real_clss)
+            output_imgs, output_rpts, output_joint = netD(fake_imgs.detach(), fake_rpts.detach(), real_clss)
             # Calculate D's loss on the all-fake batch
-            errD_fake = criterion(output_imgs, label)
+            errD_rpts = criterion(output_rpts, label)
+            errD_imgs = criterion(output_imgs, label)
+            errD_joint = criterion(output_joint, label)
+            errD_fake = errD_imgs + errD_rpts + errD_joint
             # Calculate the gradients for this batch
             errD_fake.backward()
-            D_G_z1 = output_imgs.mean().item()
+            D_G_z1 = output_imgs.mean().item() + output_rpts.mean().item() + output_joint.mean().item()
             # Add the gradients from the all-real and all-fake batches
             errD = errD_real + errD_fake
             # Update D
@@ -123,16 +131,19 @@ def run_training(args, dataset, train_loader):
             ############################
             # (2) Update G network: maximize log(D(G(z)))
             ###########################
-            print("(2) Update G network")
+            # print("(2) Update G network")
             netG.zero_grad()
             label.fill_(real_label)  # fake labels are real for generator cost
             # Since we just updated D, perform another forward pass of all-fake batch through D
             output_imgs, output_rpts, output_joint = netD(fake_imgs, fake_rpts, real_clss)
             # Calculate G's loss based on this output
-            errG = criterion(output_imgs, label)
+            errG_rpts = criterion(output_rpts, label)
+            errG_imgs = criterion(output_imgs, label)
+            errG_joint = criterion(output_joint, label)
+            errG = errG_imgs + errG_rpts + errG_joint
             # Calculate gradients for G
             errG.backward()
-            D_G_z2 = output_imgs.mean().item()
+            D_G_z2 = output_imgs.mean().item() + output_rpts.mean().item() + output_joint.mean().item()
             # Update G
             optimizerG.step()
 
@@ -145,12 +156,57 @@ def run_training(args, dataset, train_loader):
             G_losses.append(errG.item())
             D_losses.append(errD.item())
             # Check how the generator is doing by saving G's output on fixed_noise
-            # if (iters % 500 == 0) or ((epoch == args.epochs-1) and (i == len(train_loader)-1)):
-            #     with torch.no_grad():
-            #         fake_imgs, fake_rpts = netG(fixed_noise)
-            #         fake = fake_imgs.detach().cpu()
-            #     img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+            if (iters % 500 == 0) or ((epoch == args.epochs-1) and (i == len(train_loader)-1)):
+                with torch.no_grad():
+                    fake_imgs, fake_rpts = netG(fixed_noise, fixed_clss)
+                    fake = fake_imgs.detach().cpu()
+                img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
             iters += 1
+        # save model
+        if epoch % 10 == 0 or epoch == args.epochs-1:
+            torch.save({
+            'epoch': epoch+1,
+            'G model_state_dict': netG.state_dict(),
+            'D model_state_dict': netD.state_dict(),
+            'G optimizer_state_dict': optimizerG.state_dict(),
+            'D optimizer_state_dict': optimizerD.state_dict(),
+            'vocab_size': dataset.vocab_size,
+            'args': vars(args)
+            }, checkpoint_path)
+
+
+    plt.figure(figsize=(10,5))
+    plt.title("Generator and Discriminator Loss During Training")
+    plt.plot(G_losses,label="G")
+    plt.plot(D_losses,label="D")
+    plt.xlabel("iterations")
+    plt.ylabel("Loss")
+    plt.legend()
+    plt.show()
+
+
+    #%%capture
+    fig = plt.figure(figsize=(8,8))
+    plt.axis("off")
+    ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
+    ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+    HTML(ani.to_jshtml())
+
+
+    # Grab a batch of real images from the dataloader
+    # real_batch = real_imgs
+    # Plot the real images
+    plt.figure(figsize=(15,15))
+    plt.subplot(1,2,1)
+    plt.axis("off")
+    plt.title("Real Images")
+    plt.imshow(np.transpose(vutils.make_grid(real_imgs.to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
+    # Plot the fake images from the last epoch
+    plt.subplot(1,2,2)
+    plt.axis("off")
+    plt.title("Fake Images")
+    plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+    plt.show()
 
 def main(args):
     global tic

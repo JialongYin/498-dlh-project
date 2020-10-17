@@ -2,6 +2,119 @@ import torch
 import torch.nn as nn
 from torch.autograd import Variable
 
+
+# Residual block
+class ResBlockUp(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResBlockUp, self).__init__()
+        # CBN(n_category, n_hidden, num_features)
+        self.condBN1 = CBN(128+20, 128+20, in_channels)
+        self.conv1 = deconv4x4(in_channels, out_channels, stride)
+        self.condBN2 = CBN(128+20, 128+20, out_channels)
+        self.conv2 = deconv3x3(out_channels, out_channels)
+        self.relu = nn.ReLU(inplace=True)
+        self.downsample = downsample
+
+    def forward(self, x_clss_tuple):
+        x, clss = x_clss_tuple
+        # x: batch x ci x h x w
+        # class: batch x (128 + 20)
+        residual = x
+        out = self.condBN1(x, clss)
+        out = self.relu(out)
+        # self.conv1: deconv4x4 ConvTranspose2d(ci, c0, kernel_size=(4, 4), stride=(2, 2), padding=(1, 1), bias=False)
+        out = self.conv1(out)
+        # out: batch x co x 2h x 2w
+        out = self.condBN2(out, clss)
+        out = self.relu(out)
+        # self.conv2: deconv3x3 ConvTranspose2d(c0, c0, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
+        out = self.conv2(out)
+        # out: batch x co x 2h x 2w
+        if self.downsample is not None:
+            # x: batch x ci x h x w
+            # self.downsample: ConvTranspose2d(ci, c0, kernel_size=(2, 2), stride=(2, 2), bias=False)
+            residual = self.downsample(x)
+            # residual: batch x co x 2h x 2w
+        out += residual
+        return out
+
+# 3x3 convolution H->H
+def deconv3x3(in_channels, out_channels, stride=1):
+    return nn.ConvTranspose2d(in_channels, out_channels, kernel_size=3,
+                     stride=stride, padding=1, bias=False)
+
+# 4x4 convolution H->2H
+def deconv4x4(in_channels, out_channels, stride=1):
+    return nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,
+                     stride=stride, padding=1, bias=False)
+
+
+
+# Residual block
+class ResBlockDown(nn.Module):
+    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
+        super(ResBlockDown, self).__init__()
+        self.relu = nn.ReLU(inplace=True)
+        self.conv1 = conv3x3(in_channels, out_channels)
+        # self.bn1 = nn.BatchNorm2d(out_channels)
+        self.conv2 = conv3x3(out_channels, out_channels, stride)
+        # self.bn2 = nn.BatchNorm2d(out_channels)
+        self.downsample = downsample
+
+    def forward(self, x):
+        residual = x
+        out = self.relu(x)
+        out = self.conv1(out)
+        # out = self.bn1(out)
+        out = self.relu(out)
+        out = self.conv2(out)
+        # out = self.bn2(out)
+        if self.downsample is not None:
+            residual = self.downsample(x)
+        out += residual
+        # out = self.relu(out)
+        return out
+
+# 3x3 convolution
+def conv3x3(in_channels, out_channels, stride=1):
+    return nn.Conv2d(in_channels, out_channels, kernel_size=3,
+                     stride=stride, padding=1, bias=False)
+
+# Self attention block
+class SelfAttnBlock(nn.Module):
+    """ Self attention Layer"""
+    def __init__(self,in_dim):
+        super(SelfAttnBlock,self).__init__()
+        self.chanel_in = in_dim
+
+        self.query_conv = nn.Conv2d(in_channels = in_dim , out_channels = max(in_dim//8,1) , kernel_size = 1)
+        self.key_conv = nn.Conv2d(in_channels = in_dim , out_channels = max(in_dim//8,1) , kernel_size = 1)
+        self.value_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim , kernel_size= 1)
+        self.gamma = nn.Parameter(torch.zeros(1))
+
+        self.softmax  = nn.Softmax(dim=-1) #
+    def forward(self,x):
+        """
+            inputs :
+                x : input feature maps( B X C X W X H)
+            returns :
+                out : self attention value + input feature
+                attention: B X N X N (N is Width*Height)
+        """
+        m_batchsize,C,width ,height = x.size()
+        proj_query  = self.query_conv(x).view(m_batchsize,-1,width*height).permute(0,2,1) # B X CX(N)
+        proj_key =  self.key_conv(x).view(m_batchsize,-1,width*height) # B X C x (*W*H)
+        energy =  torch.bmm(proj_query,proj_key) # transpose check
+        attention = self.softmax(energy) # BX (N) X (N)
+        proj_value = self.value_conv(x).view(m_batchsize,-1,width*height) # B X C X N
+
+        out = torch.bmm(proj_value,attention.permute(0,2,1) )
+        out = out.view(m_batchsize,C,width,height)
+
+        out = self.gamma*out + x
+        return out,attention
+
+
 class CBN(nn.Module):
 
     def __init__(self, n_category, n_hidden, num_features, eps=1e-5, momentum=0.9, is_training=True):
@@ -120,6 +233,7 @@ def batch_norm(input, running_mean, running_var, gammas, betas,
         out = gammas.contiguous().view(N,C,1,1).expand((N, C, H, W)) * X_hat + betas.contiguous().view(N,C,1,1).expand((N, C, H, W))
 
         return out, running_mean, running_var
+
 
 if __name__ == '__main__':
 

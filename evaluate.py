@@ -14,24 +14,65 @@ from scipy.stats import entropy
 import matplotlib.pyplot as plt
 import statistics
 import math
+import torchvision.utils as vutils
+import matplotlib.animation as animation
+from IPython.display import HTML
 
-from model import FactorGraphNN, BP_FGNN
-from data import collate_wrapper
+from data import Dataset, collate_wrapper
+from model import Generator, Discriminator
 
 def get_args():
-    pass
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--run', default='', help='Continue training on runX. Eg. --run=run1')
+    args = parser.parse_args()
+    args.result_path = "results/"
+    args.checkpoint_dir = "checkpoint_emixer/"
+    args.checkpoint = "checkpoint"
+    args.device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    args.seed = 1337
+    np.random.seed(args.seed)
+    torch.manual_seed(args.seed)
+    if len(args.run) == 0:
+        run_count = len([dir for dir in os.listdir(args.checkpoint_dir) if dir[0:3] == "run"])
+        args.run = 'run{}'.format(run_count-1)
+    args.checkpoint_dir = os.path.join(args.checkpoint_dir, args.run)
+    args.result_path = os.path.join(args.result_path, args.run)+'/'
+    os.makedirs(args.result_path, exist_ok=True)
+    return args
 
-def run_evaluation(args, checkpoint, test_dict):
-    pass
+def run_evaluation(args, checkpoint):
+    device = args.device
+    # Create the generator
+    netG = Generator(vocab_size=checkpoint['vocab_size']).to(device)
+    # Create the Discriminator
+    # netD = Discriminator(vocab_size=checkpoint['vocab_size']).to(device)
+
+    netG.load_state_dict(checkpoint['G model_state_dict'])
+    # netD.load_state_dict(checkpoint['D model_state_dict']).to(args.device)
+    netG.eval()
+
+
+    img_list = []
+    fixed_noise = torch.randn(16, 120, 1, 1, device=device)
+    fixed_clss = torch.zeros((16, 14))
+    fixed_clss[:, [1, 3, 9]] = 1
+    fake_imgs, fake_rpts = netG(fixed_noise, fixed_clss)
+    fake = fake_imgs.detach().cpu()
+    img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+
+    plt.subplot(1,2,2)
+    plt.axis("off")
+    plt.title("Fake Images")
+    plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+    plt.show()
 
 def main(args):
     tic = time.time()
-    test_dict = joblib.load(args.pkl)
     print(args.run)
     # print("dataset len:", len([item for sublist in test_dict.values() for item in sublist]))
     checkpoint_path = os.path.join(args.checkpoint_dir, args.checkpoint)
     checkpoint = torch.load(checkpoint_path, map_location=torch.device(args.device))
-    average = run_evaluation(args, checkpoint, test_dict)
+    average = run_evaluation(args, checkpoint)
     # print('[{:.2f}] Finish evaluation'.format(time.time() - tic))
 
 if __name__ == '__main__':

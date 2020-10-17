@@ -9,64 +9,50 @@ import os
 from torch.nn.utils.rnn import pad_sequence, pack_padded_sequence, pad_packed_sequence
 from utils import CBN
 from utils import *
-
-nc = 1
-
-# Size of z latent vector (i.e. size of generator input)
-nz = 120
-
-# Size of feature maps in generator
-ngf = 64
-
-# Size of feature maps in discriminator
-ndf = 64
-
-# Number of training epochs
-num_epochs = 5
-
-# Learning rate for optimizers
-lr = 0.0002
-
-# Beta1 hyperparam for Adam optimizers
-beta1 = 0.5
-
-# Number of GPUs available. Use 0 for CPU mode.
-ngpu = 1
-# Generator Code
+from densenet import *
 
 class Generator(nn.Module):
-    def __init__(self, ngpu):
+    def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
         super(Generator, self).__init__()
-        self.ngpu = ngpu
+        # embed noise & class
         self.fc_cls = nn.Linear(14, 128)
         self.fc_noise = nn.Linear(20, 20)
+        # image generator
         self.G_img = G_img_Net(ResBlockUp, [1, 1, 1, 1, 1], 2)
+        # report generator
+        self.G_rpt = G_rpt_Net(vocab_size, v_feat_size, hidden_size, word_emb_size, max_sen, max_word)
 
     def forward(self, noise, clss):
-        """Inputs: (a) noise vector z ∈ R^120 (b) class information y"""
-        # print("noise", noise.size())
-        # print(self.main)
+        """Inputs: noise: batch x 120 x 1 x 1
+                    class: batch x class_num (14)
+           Return: images: batch x 1 x 128 x 128
+                    reports: batch x seq_len"""
+        # ? clss is not one-hot vector -> "class information y represented as one-hot vector."
+        # ? self.fc_noise # units not specified -> "The vectors zspl is passed through a linear layer to obtain zin"
+        # embed class from (*, 14) to (*, 128)
         y_emd = self.fc_cls(clss)
+        # split (*, 120, 1, 1) noise to (*, 100, 1, 1) noise & (*, 20, 1, 1) z_spl->z_in
         noise, z_spl = torch.split(noise, [100, 20], dim=1)
         z_spl = z_spl.view(z_spl.size(0), -1)
         z_in = self.fc_noise(z_spl)
+        # condition vector: concatenate from noise and class, batch x (128 + 20)
         clss_emd = torch.cat((z_in, y_emd), dim=1)
-        imgs = self.G_img(noise, clss_emd)
-        # imgs = self.main(noise)
-        # print("noise imgs", imgs.size())
 
-        rpts = None
+        # imgs: batch x 1 x 128 x 128
+        imgs = self.G_img(noise, clss_emd)
+        # rpts: batch x seq_len
+        rpts = self.G_rpt(imgs)
         return imgs, rpts
 
 # G_img_Net
 class G_img_Net(nn.Module):
     def __init__(self, block, layers, num_classes=2):
         super(G_img_Net, self).__init__()
-        self.in_channels = 64
         self.conv = nn.ConvTranspose2d(100, 64,
                   kernel_size=16, stride=2, padding=0, bias=False)
         self.bn = nn.BatchNorm2d(64)
         self.relu = nn.ReLU()
+        self.in_channels = 64
 
         self.layer0 = self.make_layer(block, 32, layers[0], 2)
         self.layer1 = self.make_layer(block, 16, layers[1], 2)
@@ -81,6 +67,7 @@ class G_img_Net(nn.Module):
             downsample = nn.Sequential(
                 nn.ConvTranspose2d(self.in_channels, out_channels,
                           kernel_size=2, stride=stride, bias=False),
+                # nn.BatchNorm2d(out_channels)
             )
         layers = []
         layers.append(block(self.in_channels, out_channels, stride, downsample)) # 残差直接映射部分
@@ -90,90 +77,132 @@ class G_img_Net(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x, clss):
-        # print("x", x.size())
+        # ? additional conv, bn, relu not aligned with "Architectural layout of EMIXER image generator"
+        # ? Res-block-up channel not specified for each block -> "ci, co are input and output channels for the Res-block-up"
+        # ? Res-block-up kernel size of Conv [4, 4, 1] & [3, 3, 1] mismatch -> "[3,3,1]"
+        # ? Res-block-up kernel size of Shortcut [2, 2, 1] mismatch -> "[1,1,1]"
+        # x: batch x 100 x 1 x 1
         out = self.conv(x)
         out = self.bn(out)
         out = self.relu(out)
-        # print("conv", out.size())
+        # out: batch x 64 x 16 x 16
         out = self.layer0((out, clss))
-        # print("layer0", out.size())
+        # out: batch x 32 x 32 x 32
         out = self.layer1((out, clss))
-        # print("layer1", out.size())
+        # out: batch x 16 x 64 x 64
         out, attn = self.attn_layer(out)
         out = self.layer2((out, clss))
-        # print("layer2", out.size())
+        # output: batch x 1 x 128 x 128
         return out
 
-# Residual block
-class ResBlockUp(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super(ResBlockUp, self).__init__()
-        self.condBN1 = CBN(128+20, 128+20, in_channels)
-        self.conv1 = deconv4x4(in_channels, out_channels, stride)
-        # self.bn1 = nn.BatchNorm2d(out_channels)
-        self.condBN2 = CBN(128+20, 128+20, out_channels)
-        self.conv2 = deconv3x3(out_channels, out_channels)
-        # self.bn2 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.downsample = downsample
+# G_rpt_Net
+class G_rpt_Net(nn.Module):
+    def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
+        super(G_rpt_Net, self).__init__()
+        # max num of sentences per report
+        self.max_sen = max_sen
+        # max num of words per sentence
+        self.max_word = max_word
 
-    def forward(self, x_clss_tuple):
-        x, clss = x_clss_tuple
-        # print("ResBlockUp", x.size(), clss.size())
-        # print("x", x.size())
-        residual = x
-        out = self.condBN1(x, clss)
-        out = self.relu(out)
-        # print("conv1", self.conv1)
-        out = self.conv1(out)
-        # print("conv1", out.size())
-        # out = self.bn1(out)
-        out = self.condBN2(out, clss)
-        out = self.relu(out)
-        # print("conv2", self.conv2)
-        out = self.conv2(out)
-        # print("conv2", out.size())
-        # out = self.bn2(out)
-        if self.downsample is not None:
-            residual = self.downsample(x)
-            # print("residual x", x.size())
-            # print(self.downsample)
-            # print("residual", residual.size())
-        out += residual
-        # out = self.relu(out)
-        return out
+        # image encoder: pre-trained DenseNet model
+        # ? not pretrianed yet, what different chest X-ray dataset -> "This CNN model is pre-trained on X-ray images I using a DenseNet model." "a different chest X-ray dataset"
+        self.img_encoder = densenet121(num_classes=v_feat_size)
+        self.sent_decoder = nn.LSTM(v_feat_size, hidden_size, 1, batch_first =True)
+        # ? not use stop to decide sent num and use max_sent instead -> "get probability distribution ui over two states CONTINUE = 0, STOP = 1."
+        self.stop_net = nn.Sequential(
+            nn.Linear(hidden_size, 1),
+            nn.Sigmoid()
+        )
+        # ? self.topic_net # units not specified -> "a topic vector ti for ith sentence in the report"
+        self.topic_net = nn.Sequential(
+            nn.Linear(hidden_size, word_emb_size),
+            nn.Linear(word_emb_size, word_emb_size),
+            nn.Linear(word_emb_size, word_emb_size)
+        )
 
-# 3x3 convolution H->H
-def deconv3x3(in_channels, out_channels, stride=1):
-    return nn.ConvTranspose2d(in_channels, out_channels, kernel_size=3,
-                     stride=stride, padding=1, bias=False)
+        self.word_decoder = nn.LSTM(word_emb_size, hidden_size, 3, batch_first =True)
+        self.embed = nn.Embedding(vocab_size, word_emb_size)
+        self.word_pred_net = nn.Sequential(
+            nn.Linear(hidden_size, vocab_size),
+            nn.Softmax(dim=1)
+        )
 
-# 4x4 convolution H->2H
-def deconv4x4(in_channels, out_channels, stride=1):
-    return nn.ConvTranspose2d(in_channels, out_channels, kernel_size=4,
-                     stride=stride, padding=1, bias=False)
+    def forward(self, imgs):
+        # imgs: batch x 1 x 128 x 128
+        batch_size = imgs.size(0)
+        # img_feat: batch x v_feat_size
+        img_feat = self.img_encoder(imgs)
 
+
+        # expand img_feat: batch x max_sen x v_feat_size
+        img_feat = img_feat.unsqueeze(1).repeat(1,self.max_sen,1)
+        # hidden: batch x max_sen x hidden_size
+        hidden, (hn, cn) = self.sent_decoder(img_feat)
+        # stops: batch x max_sen x 1
+        stops = self.stop_net(hidden)
+        # topics: batch x max_sen x word_emb_size
+        topics = self.topic_net(hidden)
+
+
+        # reshape topics: (batch * max_sen) x 1 x word_emb_size
+        # topics for each sentence are independent also first input for word_rnn
+        topics = topics.reshape(-1, topics.size(2)).unsqueeze(1)
+        # {'<padding>':0, '<start>':1, '<end>':2, '<unk>':3}
+        start = torch.ones(topics.size(0), dtype=torch.long)
+        start_embed = self.embed(start).unsqueeze(1)
+        # initial word_input of topics & start embedding: (batch * max_sen) x 2 x word_emb_size
+        word_input = torch.cat((topics,start_embed), dim=1)
+
+        rpts = []
+        rpts_mask = torch.ones(batch_size, self.max_sen, self.max_word)
+        # stops = (stops > 0.5).float()
+        states = None
+        for i in range(self.max_word):
+            # hidden_word: (batch * max_sen) x 1 x hidden_size
+            hidden_word, states = self.word_decoder(word_input, states)
+            # word_token: (batch * max_sen) x 1
+            word_token = self.word_pred_net(hidden_word[:, -1:, :]).argmax(dim=2)
+            # word_input: (batch * max_sen) x 1 x word_emb_size
+            word_input = self.embed(word_token)
+            rpts.append(word_token)
+
+        # rpts list to tensor: batch_size x (max_sen * max_word)
+        rpts = torch.cat(rpts, dim=1).reshape(batch_size, -1)
+        # rpts: batch_size x (start + max_sen * max_word)
+        rpts = torch.cat((torch.ones((batch_size, 1), dtype=torch.long), rpts), dim=1)
+        return rpts
 
 
 class Discriminator(nn.Module):
-    def __init__(self, ngpu, vocab_size):
+    def __init__(self, vocab_size, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
         super(Discriminator, self).__init__()
-        self.ngpu = ngpu
-        self.D_rpt_rnn = nn.LSTM(vocab_size, 2*vocab_size, 1, batch_first =True)
-        self.D_rpt_cls = nn.Linear(2*vocab_size, 2)
+        # D_rpt
+        self.embed = nn.Embedding(vocab_size, word_emb_size)
+        self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
+        self.D_rpt_cls = nn.Linear(hidden_size, 2)
+        # D_img
         self.D_img = D_img_Net(ResBlockDown, [1, 1, 1, 1, 1], 2)
+        # D_joint
+        self.D_joint = D_joint_Net(v_feat_size, vocab_size, word_emb_size, hidden_size)
 
 
     def forward(self, input_imgs, input_rpts, input_clss):
-        # _ , (h_n_rpts, _ ) = self.D_rpt_rnn(input_rpts)
-        # label_rpts = self.D_rpt_cls(h_n_rpts)
-        # label_rpts = F.softmax(label_rpts, dim=2)[:, :, 1].view(-1)
+        # embed input_rpts: batch x seq_len -> batch x seq_len x word_emb_size
+        input_rpts_emb = self.embed(input_rpts)
+        # h_n_rpts contains the hidden state for t = seq_len: (num_layers * num_directions, batch, hidden_size)
+        _ , (h_n_rpts, _ ) = self.D_rpt_rnn(input_rpts_emb)
+        # label_rpts: (num_layers * num_directions, batch, 2)
+        label_rpts = self.D_rpt_cls(h_n_rpts)
+        # label_rpts: (batch)
+        label_rpts = F.softmax(label_rpts, dim=2)[:, :, 1].view(-1)
+
 
         label_imgs = self.D_img(input_imgs, input_clss)
         label_imgs = F.softmax(label_imgs, dim=1)[:, 1].view(-1)
 
-        label_rpts = None
-        label_joint = None
+        label_joint = self.D_joint(input_imgs, input_rpts)
+        label_joint = F.softmax(label_joint, dim=1)[:, 1].view(-1)
+
         return label_imgs, label_rpts, label_joint
 
 # D_img_Net
@@ -184,6 +213,7 @@ class D_img_Net(nn.Module):
         # self.conv = conv3x3(1, 8)
         # self.bn = nn.BatchNorm2d(8)
         # self.relu = nn.ReLU(inplace=True)
+
         self.in_channels = 1
         self.layer0 = self.make_layer(block, 2, layers[0], 2)
         self.attn_layer = SelfAttnBlock(2)
@@ -211,89 +241,58 @@ class D_img_Net(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x, clss):
-        # print("initial", x.size())
         # out = self.conv(x)
         # out = self.bn(out)
         # out = self.relu(out)
+
+        # x: batch x 1 x 128 x 128
         out = self.layer0(x)
         out, attn = self.attn_layer(out)
-        # print("layer0", out.size())
+        # out: batch x 2 x 64 x 64
         out = self.layer1(out)
-        # print("layer1", out.size())
+        # out: batch x 4 x 32 x 32
         out = self.layer2(out)
-        # print("layer2", out.size())
+        # out: batch x 8 x 16 x 16
         out = self.layer3(out)
-        # print("layer3", out.size())
+        # out: batch x 16 x 8 x 8
         out = self.layer4(out)
-        # print("layer4", out.size())
+        # out: batch x 32 x 4 x 4
         out = self.avg_pool(out)
         out = self.relu(out)
-        # print("output", out.size())
+        # out: batch x 32 x 2 x 2
         out = out.view(out.size(0), -1)
+        # clss: batch x 14
         out = torch.cat((out,clss), dim=1)
         out = self.fc(out)
         return out
 
-# Residual block
-class ResBlockDown(nn.Module):
-    def __init__(self, in_channels, out_channels, stride=1, downsample=None):
-        super(ResBlockDown, self).__init__()
-        self.conv1 = conv3x3(in_channels, out_channels)
-        # self.bn1 = nn.BatchNorm2d(out_channels)
-        self.relu = nn.ReLU(inplace=True)
-        self.conv2 = conv3x3(out_channels, out_channels, stride)
-        # self.bn2 = nn.BatchNorm2d(out_channels)
-        self.downsample = downsample
 
-    def forward(self, x):
-        residual = x
-        out = self.relu(x)
-        out = self.conv1(out)
-        # out = self.bn1(out)
-        out = self.relu(out)
-        out = self.conv2(out)
-        # out = self.bn2(out)
-        if self.downsample is not None:
-            residual = self.downsample(x)
-        out += residual
-        # out = self.relu(out)
-        return out
+# D_joint_Net
+class D_joint_Net(nn.Module):
+    def __init__(self, v_feat_size, vocab_size, word_emb_size, hidden_size):
+        super(D_joint_Net, self).__init__()
+        # img_feat
+        self.img_encoder = densenet121(num_classes=v_feat_size)
+        # rpt_feat
+        self.embed = nn.Embedding(vocab_size, word_emb_size)
+        self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
+        self.fc_feat = nn.Linear(hidden_size, hidden_size)
+        # joint_feat classifier
+        self.fc_cls = nn.Linear(hidden_size+v_feat_size, 2)
 
-# 3x3 convolution
-def conv3x3(in_channels, out_channels, stride=1):
-    return nn.Conv2d(in_channels, out_channels, kernel_size=3,
-                     stride=stride, padding=1, bias=False)
+    def forward(self, input_imgs, input_rpts):
+        batch_size = input_imgs.size(0)
+        # img_feat: batch x v_feat_size
+        img_feat = self.img_encoder(input_imgs)
 
-# Self attention block
-class SelfAttnBlock(nn.Module):
-    """ Self attention Layer"""
-    def __init__(self,in_dim):
-        super(SelfAttnBlock,self).__init__()
-        self.chanel_in = in_dim
+        # embed input_rpts: batch x seq_len -> batch x seq_len x word_emb_size
+        input_rpts = self.embed(input_rpts)
+        # h_n_rpts contains the hidden state for t = seq_len: (num_layers * num_directions, batch, hidden_size)
+        _ , (h_n_rpts, _ ) = self.D_rpt_rnn(input_rpts)
+        # rpt_feat: batch x rpt_feat_size (hidden_size)
+        rpt_feat = self.fc_feat(h_n_rpts).view(batch_size, -1)
 
-        self.query_conv = nn.Conv2d(in_channels = in_dim , out_channels = max(in_dim//8,1) , kernel_size = 1)
-        self.key_conv = nn.Conv2d(in_channels = in_dim , out_channels = max(in_dim//8,1) , kernel_size = 1)
-        self.value_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim , kernel_size= 1)
-        self.gamma = nn.Parameter(torch.zeros(1))
-
-        self.softmax  = nn.Softmax(dim=-1) #
-    def forward(self,x):
-        """
-            inputs :
-                x : input feature maps( B X C X W X H)
-            returns :
-                out : self attention value + input feature
-                attention: B X N X N (N is Width*Height)
-        """
-        m_batchsize,C,width ,height = x.size()
-        proj_query  = self.query_conv(x).view(m_batchsize,-1,width*height).permute(0,2,1) # B X CX(N)
-        proj_key =  self.key_conv(x).view(m_batchsize,-1,width*height) # B X C x (*W*H)
-        energy =  torch.bmm(proj_query,proj_key) # transpose check
-        attention = self.softmax(energy) # BX (N) X (N)
-        proj_value = self.value_conv(x).view(m_batchsize,-1,width*height) # B X C X N
-
-        out = torch.bmm(proj_value,attention.permute(0,2,1) )
-        out = out.view(m_batchsize,C,width,height)
-
-        out = self.gamma*out + x
-        return out,attention
+        # joint_emb: batch x (v_feat_size + rpt_feat_size)
+        joint_emb = torch.cat((img_feat, rpt_feat), dim=1)
+        label_joint = self.fc_cls(joint_emb)
+        return label_joint

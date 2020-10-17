@@ -19,8 +19,8 @@ class Generator(nn.Module):
         self.fc_noise = nn.Linear(20, 20)
         # image generator
         self.G_img = G_img_Net(ResBlockUp, [1, 1, 1, 1, 1], 2)
-        # report generator
-        self.G_rpt = G_rpt_Net(vocab_size, v_feat_size, hidden_size, word_emb_size, max_sen, max_word)
+        # # report generator
+        # self.G_rpt = G_rpt_Net(vocab_size, v_feat_size, hidden_size, word_emb_size, max_sen, max_word)
 
     def forward(self, noise, clss):
         """Inputs: noise: batch x 120 x 1 x 1
@@ -40,8 +40,9 @@ class Generator(nn.Module):
 
         # imgs: batch x 1 x 128 x 128
         imgs = self.G_img(noise, clss_emd)
-        # rpts: batch x seq_len
-        rpts = self.G_rpt(imgs)
+        # # rpts: batch x seq_len
+        # rpts = self.G_rpt(imgs)
+        rpts = None
         return imgs, rpts
 
 # G_img_Net
@@ -176,33 +177,34 @@ class G_rpt_Net(nn.Module):
 class Discriminator(nn.Module):
     def __init__(self, vocab_size, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
         super(Discriminator, self).__init__()
-        # D_rpt
-        self.embed = nn.Embedding(vocab_size, word_emb_size)
-        self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
-        self.D_rpt_cls = nn.Linear(hidden_size, 2)
+        # # D_rpt
+        # self.embed = nn.Embedding(vocab_size, word_emb_size)
+        # self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
+        # self.D_rpt_cls = nn.Linear(hidden_size, 2)
         # D_img
         self.D_img = D_img_Net(ResBlockDown, [1, 1, 1, 1, 1], 2)
-        # D_joint
-        self.D_joint = D_joint_Net(v_feat_size, vocab_size, word_emb_size, hidden_size)
+        # # D_joint
+        # self.D_joint = D_joint_Net(v_feat_size, vocab_size, word_emb_size, hidden_size)
 
 
     def forward(self, input_imgs, input_rpts, input_clss):
-        # embed input_rpts: batch x seq_len -> batch x seq_len x word_emb_size
-        input_rpts_emb = self.embed(input_rpts)
-        # h_n_rpts contains the hidden state for t = seq_len: (num_layers * num_directions, batch, hidden_size)
-        _ , (h_n_rpts, _ ) = self.D_rpt_rnn(input_rpts_emb)
-        # label_rpts: (num_layers * num_directions, batch, 2)
-        label_rpts = self.D_rpt_cls(h_n_rpts)
-        # label_rpts: (batch)
-        label_rpts = F.softmax(label_rpts, dim=2)[:, :, 1].view(-1)
+        # # embed input_rpts: batch x seq_len -> batch x seq_len x word_emb_size
+        # input_rpts_emb = self.embed(input_rpts)
+        # # h_n_rpts contains the hidden state for t = seq_len: (num_layers * num_directions, batch, hidden_size)
+        # _ , (h_n_rpts, _ ) = self.D_rpt_rnn(input_rpts_emb)
+        # # label_rpts: (num_layers * num_directions, batch, 2)
+        # label_rpts = self.D_rpt_cls(h_n_rpts)
+        # # label_rpts: (batch)
+        # label_rpts = F.softmax(label_rpts, dim=2)[:, :, 1].view(-1)
 
 
         label_imgs = self.D_img(input_imgs, input_clss)
         label_imgs = F.softmax(label_imgs, dim=1)[:, 1].view(-1)
 
-        label_joint = self.D_joint(input_imgs, input_rpts)
-        label_joint = F.softmax(label_joint, dim=1)[:, 1].view(-1)
+        # label_joint = self.D_joint(input_imgs, input_rpts)
+        # label_joint = F.softmax(label_joint, dim=1)[:, 1].view(-1)
 
+        label_rpts, label_joint = None, None
         return label_imgs, label_rpts, label_joint
 
 # D_img_Net

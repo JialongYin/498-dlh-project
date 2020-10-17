@@ -99,13 +99,13 @@ def run_training(args, dataset, train_loader):
             # Forward pass real batch through D
             output_imgs, output_rpts, output_joint = netD(real_imgs, real_rpts, real_clss)
             # Calculate loss on all-real batch
-            errD_rpts = criterion(output_rpts, label)
+            # errD_rpts = criterion(output_rpts, label)
             errD_imgs = criterion(output_imgs, label)
-            errD_joint = criterion(output_joint, label)
-            errD_real = errD_imgs + errD_rpts + errD_joint
+            # errD_joint = criterion(output_joint, label)
+            errD_real = errD_imgs# + errD_rpts + errD_joint
             # Calculate gradients for D in backward pass
             errD_real.backward()
-            D_x = output_imgs.mean().item() + output_rpts.mean().item() + output_joint.mean().item()
+            D_x = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
 
             ## Train with all-fake batch
             # Generate batch of latent vectors
@@ -114,15 +114,15 @@ def run_training(args, dataset, train_loader):
             fake_imgs, fake_rpts = netG(noise, real_clss)
             label.fill_(fake_label)
             # Classify all fake batch with D
-            output_imgs, output_rpts, output_joint = netD(fake_imgs.detach(), fake_rpts.detach(), real_clss)
+            output_imgs, output_rpts, output_joint = netD(fake_imgs.detach(), fake_rpts, real_clss) #.detach()
             # Calculate D's loss on the all-fake batch
-            errD_rpts = criterion(output_rpts, label)
+            # errD_rpts = criterion(output_rpts, label)
             errD_imgs = criterion(output_imgs, label)
-            errD_joint = criterion(output_joint, label)
-            errD_fake = errD_imgs + errD_rpts + errD_joint
+            # errD_joint = criterion(output_joint, label)
+            errD_fake = errD_imgs# + errD_rpts + errD_joint
             # Calculate the gradients for this batch
             errD_fake.backward()
-            D_G_z1 = output_imgs.mean().item() + output_rpts.mean().item() + output_joint.mean().item()
+            D_G_z1 = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
             # Add the gradients from the all-real and all-fake batches
             errD = errD_real + errD_fake
             # Update D
@@ -137,13 +137,13 @@ def run_training(args, dataset, train_loader):
             # Since we just updated D, perform another forward pass of all-fake batch through D
             output_imgs, output_rpts, output_joint = netD(fake_imgs, fake_rpts, real_clss)
             # Calculate G's loss based on this output
-            errG_rpts = criterion(output_rpts, label)
+            # errG_rpts = criterion(output_rpts, label)
             errG_imgs = criterion(output_imgs, label)
-            errG_joint = criterion(output_joint, label)
-            errG = errG_imgs + errG_rpts + errG_joint
+            # errG_joint = criterion(output_joint, label)
+            errG = errG_imgs# + errG_rpts + errG_joint
             # Calculate gradients for G
             errG.backward()
-            D_G_z2 = output_imgs.mean().item() + output_rpts.mean().item() + output_joint.mean().item()
+            D_G_z2 = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
             # Update G
             optimizerG.step()
 

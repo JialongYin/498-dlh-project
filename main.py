@@ -20,9 +20,9 @@ from model import Generator, Discriminator
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=1, help='Number of epochs for training')
+    parser.add_argument('--epochs', type=int, default=1, help='Number of epochs for training (default=400k)')
     parser.add_argument('--every_n_epoch', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=4, help="Batch size (default=32)")
+    parser.add_argument('--batch_size', type=int, default=4, help="Batch size (default=512)")
     parser.add_argument('--learning_rate', type=float, default=5e-4)
     parser.add_argument('--run', default='', help='Continue training on runX. Eg. --run=run1')
     args = parser.parse_args()
@@ -64,7 +64,7 @@ def run_training(args, dataset, train_loader):
     # Create batch of latent vectors that we will use to visualize
     #  the progression of the generator
     fixed_noise = torch.randn(64, nz, 1, 1, device=device)
-    fixed_clss = torch.zeros((64, 14))
+    fixed_clss = torch.zeros((64, 14), device=device)
     # fixed_clss[:, [1, 3, 9]] = 1
     fixed_clss[:, [8]] = 1
     # Establish convention for real and fake labels during training
@@ -81,71 +81,78 @@ def run_training(args, dataset, train_loader):
     G_losses = []
     D_losses = []
     iters = 0
+    discIter = 1 # 2
+    genIter = 5
     print("Starting Training Loop...")
     # For each epoch
     for epoch in range(args.epochs):
         # For each batch in the dataloader
         for i, data in enumerate(train_loader, 0):
-            ############################
-            # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
-            ###########################
-            # print("(1) Update D network")
-            ## Train with all-real batch
-            netD.zero_grad()
-            # Format batch
-            real_rpts, real_imgs, real_clss = data[0].to(device), data[1].to(device), data[2].to(device)
-            b_size = real_imgs.size(0)
-            label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
-            # Forward pass real batch through D
-            output_imgs, output_rpts, output_joint = netD(real_imgs, real_rpts, real_clss)
-            # Calculate loss on all-real batch
-            # errD_rpts = criterion(output_rpts, label)
-            errD_imgs = criterion(output_imgs, label)
-            # errD_joint = criterion(output_joint, label)
-            errD_real = errD_imgs# + errD_rpts + errD_joint
-            # Calculate gradients for D in backward pass
-            errD_real.backward()
-            D_x = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
+            for k in range(discIter):
+                ############################
+                # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
+                ###########################
+                # print("(1) Update D network")
+                ## Train with all-real batch
+                netD.zero_grad()
+                # Format batch
+                real_rpts, real_imgs, real_clss = data[0].to(device), data[1].to(device), data[2].to(device)
+                b_size = real_imgs.size(0)
+                label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
+                # Forward pass real batch through D
+                output_imgs, output_rpts, output_joint = netD(real_imgs, real_rpts, real_clss)
+                # Calculate loss on all-real batch
+                # errD_rpts = criterion(output_rpts, label)
+                errD_imgs = criterion(output_imgs, label)
+                # errD_joint = criterion(output_joint, label)
+                errD_real = errD_imgs# + errD_rpts + errD_joint
+                # Calculate gradients for D in backward pass
+                errD_real.backward()
+                D_x = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
 
-            ## Train with all-fake batch
-            # Generate batch of latent vectors
-            noise = torch.randn(b_size, nz, 1, 1, device=device)
-            # Generate fake image batch with G
-            fake_imgs, fake_rpts = netG(noise, real_clss)
-            label.fill_(fake_label)
-            # Classify all fake batch with D
-            output_imgs, output_rpts, output_joint = netD(fake_imgs.detach(), fake_rpts, real_clss) #.detach()
-            # Calculate D's loss on the all-fake batch
-            # errD_rpts = criterion(output_rpts, label)
-            errD_imgs = criterion(output_imgs, label)
-            # errD_joint = criterion(output_joint, label)
-            errD_fake = errD_imgs# + errD_rpts + errD_joint
-            # Calculate the gradients for this batch
-            errD_fake.backward()
-            D_G_z1 = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
-            # Add the gradients from the all-real and all-fake batches
-            errD = errD_real + errD_fake
-            # Update D
-            optimizerD.step()
+                ## Train with all-fake batch
+                # Generate batch of latent vectors
+                # noise = torch.randn(b_size, nz, 1, 1, device=device)
+                noise = torch.zeros(b_size, nz, 1, 1, device=device)
+                for j in range(b_size):
+                    noise[j][j][0][0] = 1
+                # Generate fake image batch with G
+                fake_imgs, fake_rpts = netG(noise, real_clss)
+                label.fill_(fake_label)
+                # Classify all fake batch with D
+                output_imgs, output_rpts, output_joint = netD(fake_imgs.detach(), fake_rpts, real_clss) #.detach()
+                # Calculate D's loss on the all-fake batch
+                # errD_rpts = criterion(output_rpts, label)
+                errD_imgs = criterion(output_imgs, label)
+                # errD_joint = criterion(output_joint, label)
+                errD_fake = errD_imgs# + errD_rpts + errD_joint
+                # Calculate the gradients for this batch
+                errD_fake.backward()
+                D_G_z1 = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
+                # Add the gradients from the all-real and all-fake batches
+                errD = errD_real + errD_fake
+                # Update D
+                optimizerD.step()
 
-            ############################
-            # (2) Update G network: maximize log(D(G(z)))
-            ###########################
-            # print("(2) Update G network")
-            netG.zero_grad()
-            label.fill_(real_label)  # fake labels are real for generator cost
-            # Since we just updated D, perform another forward pass of all-fake batch through D
-            output_imgs, output_rpts, output_joint = netD(fake_imgs, fake_rpts, real_clss)
-            # Calculate G's loss based on this output
-            # errG_rpts = criterion(output_rpts, label)
-            errG_imgs = criterion(output_imgs, label)
-            # errG_joint = criterion(output_joint, label)
-            errG = errG_imgs# + errG_rpts + errG_joint
-            # Calculate gradients for G
-            errG.backward()
-            D_G_z2 = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
-            # Update G
-            optimizerG.step()
+            for k in range(genIter):
+                ############################
+                # (2) Update G network: maximize log(D(G(z)))
+                ###########################
+                # print("(2) Update G network")
+                netG.zero_grad()
+                label.fill_(real_label)  # fake labels are real for generator cost
+                # Since we just updated D, perform another forward pass of all-fake batch through D
+                output_imgs, output_rpts, output_joint = netD(fake_imgs, fake_rpts, real_clss)
+                # Calculate G's loss based on this output
+                # errG_rpts = criterion(output_rpts, label)
+                errG_imgs = criterion(output_imgs, label)
+                # errG_joint = criterion(output_joint, label)
+                errG = errG_imgs# + errG_rpts + errG_joint
+                # Calculate gradients for G
+                errG.backward()
+                D_G_z2 = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
+                # Update G
+                optimizerG.step()
 
             # Output training stats
             if i % 50 == 0:

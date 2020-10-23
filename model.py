@@ -14,6 +14,7 @@ from densenet import *
 class Generator(nn.Module):
     def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
         super(Generator, self).__init__()
+        # ? where to use spectral normalization -> "We also use spectral normalization for the layers in the generator and discriminator in the training process."
         # embed noise & class
         self.fc_cls = nn.Linear(14, 128)
         self.fc_noise = nn.Linear(20, 20)

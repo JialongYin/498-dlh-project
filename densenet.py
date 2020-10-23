@@ -274,10 +274,16 @@ def densenet201(pretrained=False, progress=True, **kwargs):
 
 if __name__ == '__main__':
 
-    model = densenet121()
-    x = torch.randn([4,1,224,224])
+    # model = densenet121()
+    # x = torch.randn([4,1,224,224])
+    #
+    # # print("x before", x.size())
+    # print("x after", model(x).size())
+    # # print(x)
+    # # print(model.state_dict)
 
-    # print("x before", x.size())
-    print("x after", model(x).size())
-    # print(x)
-    # print(model.state_dict)
+    import matplotlib.pyplot as plt
+    import matplotlib.image as mpimg
+
+    img=mpimg.imread('4.jpg')
+    print(img.shape)

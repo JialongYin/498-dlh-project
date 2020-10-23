@@ -17,6 +17,7 @@ import math
 import torchvision.utils as vutils
 import matplotlib.animation as animation
 from IPython.display import HTML
+from torchvision.utils import save_image
 
 from data import Dataset, collate_wrapper
 from model import Generator, Discriminator
@@ -52,19 +53,26 @@ def run_evaluation(args, checkpoint):
     netG.eval()
 
 
-    img_list = []
-    fixed_noise = torch.randn(16, 120, 1, 1, device=device)
-    fixed_clss = torch.zeros((16, 14))
-    fixed_clss[:, [1, 3, 9]] = 1
+    # img_list = []
+    # fixed_noise = torch.randn(16, 120, 1, 1, device=device)
+    b_size = 4
+    nz = 120
+    fixed_noise = torch.zeros(b_size, nz, 1, 1, device=device)
+    for i in range(b_size):
+        fixed_noise[i][i][0][0] = 1
+    fixed_clss = torch.zeros((b_size, 14))
+    fixed_clss[:, [8]] = 1
     fake_imgs, fake_rpts = netG(fixed_noise, fixed_clss)
     fake = fake_imgs.detach().cpu()
-    img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
+    for i in range(len(fake)):
+        save_image(fake[i], args.result_path+'img'+str(i)+'.png')
+    # img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
 
-    plt.subplot(1,2,2)
-    plt.axis("off")
-    plt.title("Fake Images")
-    plt.imshow(np.transpose(img_list[-1],(1,2,0)))
-    plt.show()
+    # plt.subplot(1,2,2)
+    # plt.axis("off")
+    # plt.title("Fake Images")
+    # plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+    # plt.show()
 
 def main(args):
     tic = time.time()

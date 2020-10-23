@@ -88,6 +88,14 @@ def run_training(args, dataset, train_loader):
     for epoch in range(args.epochs):
         # For each batch in the dataloader
         for i, data in enumerate(train_loader, 0):
+            # Format batch
+            real_rpts, real_imgs, real_clss = data[0].to(device), data[1].to(device), data[2].to(device)
+            b_size = real_imgs.size(0)
+            # Generate batch of latent vectors
+            # noise = torch.randn(b_size, nz, 1, 1, device=device)
+            noise = torch.zeros(b_size, nz, 1, 1, device=device)
+            for j in range(b_size):
+                noise[j][j][0][0] = 1
             for k in range(discIter):
                 ############################
                 # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
@@ -95,9 +103,6 @@ def run_training(args, dataset, train_loader):
                 # print("(1) Update D network")
                 ## Train with all-real batch
                 netD.zero_grad()
-                # Format batch
-                real_rpts, real_imgs, real_clss = data[0].to(device), data[1].to(device), data[2].to(device)
-                b_size = real_imgs.size(0)
                 label = torch.full((b_size,), real_label, dtype=torch.float, device=device)
                 # Forward pass real batch through D
                 output_imgs, output_rpts, output_joint = netD(real_imgs, real_rpts, real_clss)
@@ -111,11 +116,6 @@ def run_training(args, dataset, train_loader):
                 D_x = output_imgs.mean().item()# + output_rpts.mean().item() + output_joint.mean().item()
 
                 ## Train with all-fake batch
-                # Generate batch of latent vectors
-                # noise = torch.randn(b_size, nz, 1, 1, device=device)
-                noise = torch.zeros(b_size, nz, 1, 1, device=device)
-                for j in range(b_size):
-                    noise[j][j][0][0] = 1
                 # Generate fake image batch with G
                 fake_imgs, fake_rpts = netG(noise, real_clss)
                 label.fill_(fake_label)
@@ -141,6 +141,7 @@ def run_training(args, dataset, train_loader):
                 # print("(2) Update G network")
                 netG.zero_grad()
                 label.fill_(real_label)  # fake labels are real for generator cost
+                fake_imgs, fake_rpts = netG(noise, real_clss)
                 # Since we just updated D, perform another forward pass of all-fake batch through D
                 output_imgs, output_rpts, output_joint = netD(fake_imgs, fake_rpts, real_clss)
                 # Calculate G's loss based on this output

@@ -11,40 +11,138 @@ from utils import CBN
 from utils import *
 from densenet import *
 
+
+# Root directory for dataset
+dataroot = "data/celeba"
+
+# Number of workers for dataloader
+workers = 2
+
+# Batch size during training
+batch_size = 128
+
+# Spatial size of training images. All images will be resized to this
+#   size using a transformer.
+image_size = 64
+
+# Number of channels in the training images. For color images this is 3
+nc = 3
+
+# Size of z latent vector (i.e. size of generator input)
+nz = 100
+
+# Size of feature maps in generator
+ngf = 64
+
+# Size of feature maps in discriminator
+ndf = 64
+
+# Number of training epochs
+num_epochs = 5
+
+# Learning rate for optimizers
+lr = 0.0002
+
+# Beta1 hyperparam for Adam optimizers
+beta1 = 0.5
+
+# Number of GPUs available. Use 0 for CPU mode.
+ngpu = 1
+
+# DCGAN Generator Code
 class Generator(nn.Module):
-    def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
+    def __init__(self, ngpu):
         super(Generator, self).__init__()
-        # ? where to use spectral normalization -> "We also use spectral normalization for the layers in the generator and discriminator in the training process."
-        # embed noise & class
-        self.fc_cls = nn.Linear(14, 128)
-        self.fc_noise = nn.Linear(20, 20)
-        # image generator
-        self.G_img = G_img_Net(ResBlockUp, [1, 1, 1, 1, 1], 2)
-        # # report generator
-        # self.G_rpt = G_rpt_Net(vocab_size, v_feat_size, hidden_size, word_emb_size, max_sen, max_word)
+        self.ngpu = ngpu
+        self.main = nn.Sequential(
+            # input is Z, going into a convolution
+            nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(ngf * 8),
+            nn.ReLU(True),
+            # state size. (ngf*8) x 4 x 4
+            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 4),
+            nn.ReLU(True),
+            # state size. (ngf*4) x 8 x 8
+            nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 2),
+            nn.ReLU(True),
+            # state size. (ngf*2) x 16 x 16
+            nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf),
+            nn.ReLU(True),
+            # state size. (ngf) x 32 x 32
+            nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
+            nn.Tanh()
+            # state size. (nc) x 64 x 64
+        )
 
-    def forward(self, noise, clss):
-        """Inputs: noise: batch x 120 x 1 x 1
-                    class: batch x class_num (14)
-           Return: images: batch x 1 x 128 x 128
-                    reports: batch x seq_len"""
-        # ? clss is not one-hot vector -> "class information y represented as one-hot vector."
-        # ? self.fc_noise # units not specified -> "The vectors zspl is passed through a linear layer to obtain zin"
-        # embed class from (*, 14) to (*, 128)
-        y_emd = self.fc_cls(clss)
-        # split (*, 120, 1, 1) noise to (*, 100, 1, 1) noise & (*, 20, 1, 1) z_spl->z_in
-        noise, z_spl = torch.split(noise, [100, 20], dim=1)
-        z_spl = z_spl.view(z_spl.size(0), -1)
-        z_in = self.fc_noise(z_spl)
-        # condition vector: concatenate from noise and class, batch x (128 + 20)
-        clss_emd = torch.cat((z_in, y_emd), dim=1)
+    def forward(self, input):
+        return self.main(input)
 
-        # imgs: batch x 1 x 128 x 128
-        imgs = self.G_img(noise, clss_emd)
-        # # rpts: batch x seq_len
-        # rpts = self.G_rpt(imgs)
-        rpts = None
-        return imgs, rpts
+# DCGAN Discriminator Code
+class Discriminator(nn.Module):
+    def __init__(self, ngpu):
+        super(Discriminator, self).__init__()
+        self.ngpu = ngpu
+        self.main = nn.Sequential(
+            # input is (nc) x 64 x 64
+            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False),
+            nn.Sigmoid()
+        )
+
+    def forward(self, input):
+        return self.main(input)
+
+# class Generator(nn.Module):
+#     def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
+#         super(Generator, self).__init__()
+#         # ? where to use spectral normalization -> "We also use spectral normalization for the layers in the generator and discriminator in the training process."
+#         # embed noise & class
+#         self.fc_cls = nn.Linear(14, 128)
+#         self.fc_noise = nn.Linear(20, 20)
+#         # image generator
+#         self.G_img = G_img_Net(ResBlockUp, [1, 1, 1, 1, 1], 2)
+#         # # report generator
+#         # self.G_rpt = G_rpt_Net(vocab_size, v_feat_size, hidden_size, word_emb_size, max_sen, max_word)
+#
+#     def forward(self, noise, clss):
+#         """Inputs: noise: batch x 120 x 1 x 1
+#                     class: batch x class_num (14)
+#            Return: images: batch x 1 x 128 x 128
+#                     reports: batch x seq_len"""
+#         # ? clss is not one-hot vector -> "class information y represented as one-hot vector."
+#         # ? self.fc_noise # units not specified -> "The vectors zspl is passed through a linear layer to obtain zin"
+#         # embed class from (*, 14) to (*, 128)
+#         y_emd = self.fc_cls(clss)
+#         # split (*, 120, 1, 1) noise to (*, 100, 1, 1) noise & (*, 20, 1, 1) z_spl->z_in
+#         noise, z_spl = torch.split(noise, [100, 20], dim=1)
+#         z_spl = z_spl.view(z_spl.size(0), -1)
+#         z_in = self.fc_noise(z_spl)
+#         # condition vector: concatenate from noise and class, batch x (128 + 20)
+#         clss_emd = torch.cat((z_in, y_emd), dim=1)
+#
+#         # imgs: batch x 1 x 128 x 128
+#         imgs = self.G_img(noise, clss_emd)
+#         # # rpts: batch x seq_len
+#         # rpts = self.G_rpt(imgs)
+#         rpts = None
+#         return imgs, rpts
 
 # G_img_Net
 class G_img_Net(nn.Module):
@@ -174,39 +272,38 @@ class G_rpt_Net(nn.Module):
         rpts = torch.cat((torch.ones((batch_size, 1), dtype=torch.long), rpts), dim=1)
         return rpts
 
-
-class Discriminator(nn.Module):
-    def __init__(self, vocab_size, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
-        super(Discriminator, self).__init__()
-        # # D_rpt
-        # self.embed = nn.Embedding(vocab_size, word_emb_size)
-        # self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
-        # self.D_rpt_cls = nn.Linear(hidden_size, 2)
-        # D_img
-        self.D_img = D_img_Net(ResBlockDown, [1, 1, 1, 1, 1], 2)
-        # # D_joint
-        # self.D_joint = D_joint_Net(v_feat_size, vocab_size, word_emb_size, hidden_size)
-
-
-    def forward(self, input_imgs, input_rpts, input_clss):
-        # # embed input_rpts: batch x seq_len -> batch x seq_len x word_emb_size
-        # input_rpts_emb = self.embed(input_rpts)
-        # # h_n_rpts contains the hidden state for t = seq_len: (num_layers * num_directions, batch, hidden_size)
-        # _ , (h_n_rpts, _ ) = self.D_rpt_rnn(input_rpts_emb)
-        # # label_rpts: (num_layers * num_directions, batch, 2)
-        # label_rpts = self.D_rpt_cls(h_n_rpts)
-        # # label_rpts: (batch)
-        # label_rpts = F.softmax(label_rpts, dim=2)[:, :, 1].view(-1)
-
-
-        label_imgs = self.D_img(input_imgs, input_clss)
-        label_imgs = F.softmax(label_imgs, dim=1)[:, 1].view(-1)
-
-        # label_joint = self.D_joint(input_imgs, input_rpts)
-        # label_joint = F.softmax(label_joint, dim=1)[:, 1].view(-1)
-
-        label_rpts, label_joint = None, None
-        return label_imgs, label_rpts, label_joint
+# class Discriminator(nn.Module):
+#     def __init__(self, vocab_size, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
+#         super(Discriminator, self).__init__()
+#         # # D_rpt
+#         # self.embed = nn.Embedding(vocab_size, word_emb_size)
+#         # self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
+#         # self.D_rpt_cls = nn.Linear(hidden_size, 2)
+#         # D_img
+#         self.D_img = D_img_Net(ResBlockDown, [1, 1, 1, 1, 1], 2)
+#         # # D_joint
+#         # self.D_joint = D_joint_Net(v_feat_size, vocab_size, word_emb_size, hidden_size)
+#
+#
+#     def forward(self, input_imgs, input_rpts, input_clss):
+#         # # embed input_rpts: batch x seq_len -> batch x seq_len x word_emb_size
+#         # input_rpts_emb = self.embed(input_rpts)
+#         # # h_n_rpts contains the hidden state for t = seq_len: (num_layers * num_directions, batch, hidden_size)
+#         # _ , (h_n_rpts, _ ) = self.D_rpt_rnn(input_rpts_emb)
+#         # # label_rpts: (num_layers * num_directions, batch, 2)
+#         # label_rpts = self.D_rpt_cls(h_n_rpts)
+#         # # label_rpts: (batch)
+#         # label_rpts = F.softmax(label_rpts, dim=2)[:, :, 1].view(-1)
+#
+#
+#         label_imgs = self.D_img(input_imgs, input_clss)
+#         label_imgs = F.softmax(label_imgs, dim=1)[:, 1].view(-1)
+#
+#         # label_joint = self.D_joint(input_imgs, input_rpts)
+#         # label_joint = F.softmax(label_joint, dim=1)[:, 1].view(-1)
+#
+#         label_rpts, label_joint = None, None
+#         return label_imgs, label_rpts, label_joint
 
 # D_img_Net
 class D_img_Net(nn.Module):

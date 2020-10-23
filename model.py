@@ -12,48 +12,48 @@ from utils import *
 from densenet import *
 
 
-# Root directory for dataset
-dataroot = "data/celeba"
+# # Root directory for dataset
+# dataroot = "data/celeba"
+#
+# # Number of workers for dataloader
+# workers = 2
 
-# Number of workers for dataloader
-workers = 2
+# # Batch size during training
+# batch_size = 4 # 128
 
-# Batch size during training
-batch_size = 128
-
-# Spatial size of training images. All images will be resized to this
-#   size using a transformer.
-image_size = 64
+# # Spatial size of training images. All images will be resized to this
+# #   size using a transformer.
+# image_size = 128 # 64
 
 # Number of channels in the training images. For color images this is 3
-nc = 3
+nc = 1 # 3
 
 # Size of z latent vector (i.e. size of generator input)
-nz = 100
+nz = 120 # 100
 
 # Size of feature maps in generator
-ngf = 64
+ngf = 32 # 64
 
 # Size of feature maps in discriminator
-ndf = 64
+ndf = 32 # 64
 
-# Number of training epochs
-num_epochs = 5
+# # Number of training epochs
+# num_epochs = 250 # 5
 
-# Learning rate for optimizers
-lr = 0.0002
+# # Learning rate for optimizers
+# lr = 0.0002
 
-# Beta1 hyperparam for Adam optimizers
-beta1 = 0.5
+# # Beta1 hyperparam for Adam optimizers
+# beta1 = 0.5
 
-# Number of GPUs available. Use 0 for CPU mode.
-ngpu = 1
+# # Number of GPUs available. Use 0 for CPU mode.
+# ngpu = 1
 
 # DCGAN Generator Code
 class Generator(nn.Module):
-    def __init__(self, ngpu):
+    def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
         super(Generator, self).__init__()
-        self.ngpu = ngpu
+        # self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is Z, going into a convolution
             nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 0, bias=False),
@@ -72,19 +72,23 @@ class Generator(nn.Module):
             nn.BatchNorm2d(ngf),
             nn.ReLU(True),
             # state size. (ngf) x 32 x 32
-            nn.ConvTranspose2d( ngf, nc, 4, 2, 1, bias=False),
+            nn.ConvTranspose2d( ngf, ngf // 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf // 2),
+            nn.ReLU(True),
+            #
+            nn.ConvTranspose2d( ngf // 2, nc, 4, 2, 1, bias=False),
             nn.Tanh()
             # state size. (nc) x 64 x 64
         )
 
-    def forward(self, input):
-        return self.main(input)
+    def forward(self, noise, clss):
+        return self.main(noise), None
 
 # DCGAN Discriminator Code
 class Discriminator(nn.Module):
-    def __init__(self, ngpu):
+    def __init__(self, vocab_size, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
         super(Discriminator, self).__init__()
-        self.ngpu = ngpu
+        # self.ngpu = ngpu
         self.main = nn.Sequential(
             # input is (nc) x 64 x 64
             nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
@@ -102,12 +106,25 @@ class Discriminator(nn.Module):
             nn.BatchNorm2d(ndf * 8),
             nn.LeakyReLU(0.2, inplace=True),
             # state size. (ndf*8) x 4 x 4
-            nn.Conv2d(ndf * 8, 1, 4, 1, 0, bias=False),
+            nn.Conv2d(ndf * 8, ndf * 16, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 16),
+            nn.LeakyReLU(0.2, inplace=True),
+            #
+            nn.Conv2d(ndf * 16, 1, 4, 1, 0, bias=False),
             nn.Sigmoid()
         )
 
-    def forward(self, input):
-        return self.main(input)
+    def forward(self, input_imgs, input_rpts, input_clss):
+        return self.main(input_imgs), None, None
+
+# custom weights initialization called on netG and netD
+def weights_init(m):
+    classname = m.__class__.__name__
+    if classname.find('Conv') != -1:
+        nn.init.normal_(m.weight.data, 0.0, 0.02)
+    elif classname.find('BatchNorm') != -1:
+        nn.init.normal_(m.weight.data, 1.0, 0.02)
+        nn.init.constant_(m.bias.data, 0)
 
 # class Generator(nn.Module):
 #     def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):

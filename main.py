@@ -16,7 +16,7 @@ import matplotlib.animation as animation
 from IPython.display import HTML
 
 from data import Dataset, collate_wrapper
-from model import Generator, Discriminator
+from model import Generator, Discriminator, weights_init
 
 def get_args():
     parser = argparse.ArgumentParser()
@@ -55,24 +55,33 @@ def run_training(args, dataset, train_loader):
         print("Let's use", ngpu, "GPUs!")
         netG = nn.DataParallel(netG, list(range(ngpu)))
         netD = nn.DataParallel(netD, list(range(ngpu)))
+    netG.apply(weights_init)
+    netD.apply(weights_init)
 
     nz = 120
-    lr_D = 2e-4
-    lr_G = 5e-5
+    # lr_D = 2e-4
+    # lr_G = 5e-5
+    lr_D = 0.0002 # dcgan
+    lr_G = 0.0002 # dcgan
     # Initialize BCELoss function
     criterion = nn.BCELoss()
     # Create batch of latent vectors that we will use to visualize
     #  the progression of the generator
-    fixed_noise = torch.randn(64, nz, 1, 1, device=device)
-    fixed_clss = torch.zeros((64, 14), device=device)
+    # fixed_noise = torch.randn(64, nz, 1, 1, device=device)
+    # fixed_clss = torch.zeros((64, 14), device=device)
+    fixed_noise = torch.zeros(4, nz, 1, 1, device=device)
+    for j in range(4):
+        fixed_noise[j][j][0][0] = 1
+    fixed_clss = torch.zeros((4, 14), device=device)
     # fixed_clss[:, [1, 3, 9]] = 1
     fixed_clss[:, [8]] = 1
     # Establish convention for real and fake labels during training
     real_label = 1.
     fake_label = 0.
     # Setup Adam optimizers for both G and D
-    optimizerD = optim.Adam(netD.parameters(), lr=lr_D)
-    optimizerG = optim.Adam(netG.parameters(), lr=lr_G)
+    beta1 = 0.5 # dcgan
+    optimizerD = optim.Adam(netD.parameters(), lr=lr_D, betas=(beta1, 0.999))
+    optimizerG = optim.Adam(netG.parameters(), lr=lr_G, betas=(beta1, 0.999))
 
 
     # Training Loop
@@ -80,10 +89,12 @@ def run_training(args, dataset, train_loader):
     img_list = []
     G_losses = []
     D_losses = []
+    D_G_z_output = []
+    D_x_output = []
     iters = 0
     discIter = 1 # 2
-    genIter = 5
-    print("Starting Training Loop...")
+    genIter = 10
+    print("Starting Training Loop... discIter:{} genIter:{}".format(discIter, genIter))
     # For each epoch
     for epoch in range(args.epochs):
         # For each batch in the dataloader
@@ -163,6 +174,8 @@ def run_training(args, dataset, train_loader):
             # Save Losses for plotting later
             G_losses.append(errG.item())
             D_losses.append(errD.item())
+            D_G_z_output.append((D_G_z1 + D_G_z2) / 2)
+            D_x_output.append(D_x)
             # Check how the generator is doing by saving G's output on fixed_noise
             if (iters % 500 == 0) or ((epoch == args.epochs-1) and (i == len(train_loader)-1)):
                 with torch.no_grad():
@@ -190,7 +203,18 @@ def run_training(args, dataset, train_loader):
     plt.xlabel("iterations")
     plt.ylabel("Loss")
     plt.legend()
-    plt.show()
+    # plt.show()
+    plt.savefig(args.checkpoint_path+'/training_loss.png')
+
+    plt.figure(figsize=(10,5))
+    plt.title("Generator and Discriminator output During Training")
+    plt.plot(D_G_z_output,label="D_G_z")
+    plt.plot(D_x_output,label="D_x")
+    plt.xlabel("iterations")
+    plt.ylabel("Output")
+    plt.legend()
+    # plt.show()
+    plt.savefig(args.checkpoint_path+'/training_output.png')
 
 
     #%%capture
@@ -199,6 +223,12 @@ def run_training(args, dataset, train_loader):
     ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
     ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
     HTML(ani.to_jshtml())
+    plt.show()
+    # ani.save(args.checkpoint_path+'/animation.gif', writer='imagemagick') # comment out when runned on server
+    # for idx, img in enumerate(img_list):
+    #     plt.figure(figsize=(10,5))
+    #     plt.imshow(np.transpose(img,(1,2,0)))
+    #     plt.savefig(args.checkpoint_path+'/{}.jpg'.format(idx))
 
 
     # Grab a batch of real images from the dataloader
@@ -214,7 +244,8 @@ def run_training(args, dataset, train_loader):
     plt.axis("off")
     plt.title("Fake Images")
     plt.imshow(np.transpose(img_list[-1],(1,2,0)))
-    plt.show()
+    # plt.show()
+    plt.savefig(args.checkpoint_path+'/real_fake_img.png')
 
 def main(args):
     global tic

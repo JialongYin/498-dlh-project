@@ -26,16 +26,16 @@ from densenet import *
 # image_size = 128 # 64
 
 # Number of channels in the training images. For color images this is 3
-nc = 1 # 3
+# nc = 1 # 3
 
 # Size of z latent vector (i.e. size of generator input)
-nz = 120 # 100
+# nz = 100 # 120 # 100
 
 # Size of feature maps in generator
-ngf = 32 # 64
+# ngf = 32 # 64
 
 # Size of feature maps in discriminator
-ndf = 32 # 64
+# ndf = 32 # 64
 
 # # Number of training epochs
 # num_epochs = 250 # 5
@@ -49,9 +49,105 @@ ndf = 32 # 64
 # # Number of GPUs available. Use 0 for CPU mode.
 # ngpu = 1
 
+
+# # cDCGAN Generator Code
+# class Generator(nn.Module):
+#     def __init__(self, vocab_size, nz=100, ny=14, ngf=64, nc=1, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
+#         super(Generator, self).__init__()
+#         self.nz = nz
+#         self.ny = ny
+#         self.ylabel=nn.Sequential(
+#             nn.Linear(ny, 1000),
+#             nn.ReLU(True)
+#         )
+#
+#         self.yz=nn.Sequential(
+#             nn.Linear(nz, 200),
+#             nn.ReLU(True)
+#         )
+#
+#         self.main = nn.Sequential(
+#             # input is Z, going into a convolution
+#             nn.ConvTranspose2d( 1200, ngf * 8, 4, 1, 0, bias=False),
+#             nn.BatchNorm2d(ngf * 8),
+#             nn.ReLU(True),
+#             # state size. (ngf*8) x 4 x 4
+#             nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ngf * 4),
+#             nn.ReLU(True),
+#             # state size. (ngf*4) x 8 x 8
+#             nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ngf * 2),
+#             nn.ReLU(True),
+#             # state size. (ngf*2) x 16 x 16
+#             nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ngf),
+#             nn.ReLU(True),
+#             # state size. (ngf) x 32 x 32
+#             nn.ConvTranspose2d( ngf, ngf // 2, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ngf // 2),
+#             nn.ReLU(True),
+#             #
+#             nn.ConvTranspose2d( ngf // 2, nc, 4, 2, 1, bias=False),
+#             nn.Tanh()
+#             # state size. (nc) x 64 x 64
+#         )
+#
+#     def forward(self, noise, clss):
+#         #mapping noise and class
+#         z=self.yz(noise.view(-1, self.nz))
+#         y=self.ylabel(clss.view(-1, self.ny))
+#
+#         #mapping concatenated input to the main generator network
+#         input=torch.cat([z,y],1).view(-1,1200,1,1)
+#         output = self.main(input)
+#         return output, None
+#
+# # cDCGAN Discriminator Code
+# class Discriminator(nn.Module):
+#     def __init__(self, vocab_size, ny=14, ndf=64, nc=1, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
+#         super(Discriminator, self).__init__()
+#         self.ylabel=nn.Sequential(
+#             nn.Linear(ny,128*128*1),
+#             nn.ReLU(True)
+#         )
+#
+#         self.main = nn.Sequential(
+#             # input is (nc) x 64 x 64
+#             nn.Conv2d(nc+1, ndf, 4, 2, 1, bias=False),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             # state size. (ndf) x 32 x 32
+#             nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ndf * 2),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             # state size. (ndf*2) x 16 x 16
+#             nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ndf * 4),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             # state size. (ndf*4) x 8 x 8
+#             nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ndf * 8),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             # state size. (ndf*8) x 4 x 4
+#             nn.Conv2d(ndf * 8, ndf * 16, 4, 2, 1, bias=False),
+#             nn.BatchNorm2d(ndf * 16),
+#             nn.LeakyReLU(0.2, inplace=True),
+#             #
+#             nn.Conv2d(ndf * 16, 1, 4, 1, 0, bias=False),
+#             nn.Sigmoid()
+#         )
+#
+#     def forward(self, input_imgs, input_rpts, input_clss):
+#         y=self.ylabel(input_clss)
+#         y=y.view(-1,1,128,128)
+#         input=torch.cat([input_imgs,y],1)
+#         output = self.main(input)
+#         return output, None, None
+
+
 # DCGAN Generator Code
 class Generator(nn.Module):
-    def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
+    def __init__(self, vocab_size, nz=100, ngf=64, nc=1, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
         super(Generator, self).__init__()
         # self.ngpu = ngpu
         self.main = nn.Sequential(
@@ -86,7 +182,7 @@ class Generator(nn.Module):
 
 # DCGAN Discriminator Code
 class Discriminator(nn.Module):
-    def __init__(self, vocab_size, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
+    def __init__(self, vocab_size, ndf=64, nc=1, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
         super(Discriminator, self).__init__()
         # self.ngpu = ngpu
         self.main = nn.Sequential(
@@ -125,6 +221,7 @@ def weights_init(m):
     elif classname.find('BatchNorm') != -1:
         nn.init.normal_(m.weight.data, 1.0, 0.02)
         nn.init.constant_(m.bias.data, 0)
+
 
 # class Generator(nn.Module):
 #     def __init__(self, vocab_size, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
@@ -175,8 +272,6 @@ class G_img_Net(nn.Module):
         self.layer1 = self.make_layer(block, 16, layers[1], 2)
         self.attn_layer = SelfAttnBlock(16)
         self.layer2 = self.make_layer(block, 1, layers[2], 2)
-
-
 
     def make_layer(self, block, out_channels, blocks, stride=1):
         downsample = None
@@ -238,7 +333,7 @@ class G_rpt_Net(nn.Module):
         )
 
         self.word_decoder = nn.LSTM(word_emb_size, hidden_size, 3, batch_first =True)
-        self.embed = nn.Embedding(vocab_size, word_emb_size)
+        self.embed = nn.Embedding(vocab_size, word_emb_size) # ? padding_value = 1
         self.word_pred_net = nn.Sequential(
             nn.Linear(hidden_size, vocab_size),
             nn.Softmax(dim=1)
@@ -293,7 +388,7 @@ class G_rpt_Net(nn.Module):
 #     def __init__(self, vocab_size, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
 #         super(Discriminator, self).__init__()
 #         # # D_rpt
-#         # self.embed = nn.Embedding(vocab_size, word_emb_size)
+#         # self.embed = nn.Embedding(vocab_size, word_emb_size) # ? padding_value = 1
 #         # self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
 #         # self.D_rpt_cls = nn.Linear(hidden_size, 2)
 #         # D_img
@@ -391,7 +486,7 @@ class D_joint_Net(nn.Module):
         # img_feat
         self.img_encoder = densenet121(num_classes=v_feat_size)
         # rpt_feat
-        self.embed = nn.Embedding(vocab_size, word_emb_size)
+        self.embed = nn.Embedding(vocab_size, word_emb_size) # ? padding_value = 1
         self.D_rpt_rnn = nn.LSTM(word_emb_size, hidden_size, 1, batch_first =True)
         self.fc_feat = nn.Linear(hidden_size, hidden_size)
         # joint_feat classifier

@@ -1,86 +1,73 @@
 import os
 import time
-from bs4 import BeautifulSoup
-import joblib
 import random
-import metapy
 import glob
 from collections import defaultdict
 import matplotlib.pyplot as plt
-import pydicom
-from pydicom.data import get_testdata_files
 from skimage.transform import resize
 import pandas as pd
 import numpy as np
 
 def preprocess():
-	random.seed(30)
-	"""Extract x ray from dcm files and report from findings section of txt files"""
-	directory = 'files'
-	dataset = []
-	word_bag = defaultdict(int)
-	IMG_PX_SIZE = 128
-	label_csv = pd.read_csv("./mimic-cxr-2.0.0-negbio.csv")
-	for pxx in os.listdir(directory):
-		pxx_dir = os.path.join(directory, pxx)
-		for pat_id in os.listdir(pxx_dir):
-			pat_id_dir = os.path.join(pxx_dir, pat_id)
-			subject_id = int(pat_id[1:])
-			"Only keep existing (report, x rays) mappings"
-			file_set = set()
-			dir_set = set()
-			for f_or_d in os.listdir(pat_id_dir):
-				f_or_d_name = os.path.join(pat_id_dir, f_or_d)
-				if os.path.isdir(f_or_d_name):
-					dir_set.add(f_or_d_name)
-				else:
-					file_set.add(f_or_d_name[:-4])
-			std_dir_set = file_set.intersection(dir_set)
-			for std_dir in std_dir_set:
-				"""Extract REPORT"""
-				report_dir = std_dir+'.txt'
-				study_id = int(std_dir[-8:])
-				f = open(report_dir, 'r')
-				report_raw = f.read()
-				"Extract findings part as report"
-				start = report_raw.find("FINDINGS:") + len("FINDINGS:")
-				end = report_raw.find("IMPRESSION:")
-				findings = report_raw[start:end].lower()
-				"parse report findings section using metapy"
-				doc = metapy.index.Document()
-				doc.content(findings)
-				tok = metapy.analyzers.ICUTokenizer(suppress_tags=True)
-				tok.set_content(doc.content())
-				report = [token for token in tok]
-				for token in report:
-					 word_bag[token] += 1
-				f.close()
-				"""Extract X rays"""
-				x_rays = []
-				for std_img in os.listdir(std_dir):
-					std_img_dir = os.path.join(std_dir, std_img)
-					img = pydicom.dcmread(std_img_dir).pixel_array
-					img = img / 4095
-					resized_img = resize(img, (IMG_PX_SIZE, IMG_PX_SIZE), anti_aliasing=True)
-					# plt.imshow(resized_img, cmap=plt.cm.bone)
-					# plt.show()
-					x_rays.append(resized_img)
-				"""Extract cls"""
-				cls = np.array(label_csv[label_csv['subject_id']==subject_id][label_csv['study_id']==study_id].iloc[0].tolist()[2:])
-				cls = np.where(cls == 1, 1, 0)
-				print(cls)
-				dataset.append((report, x_rays, cls))
-	dataset_len = len(dataset)
-	random.shuffle(dataset)
-	train = dataset[:int(0.7*dataset_len)]
-	val = dataset[int(0.7*dataset_len):int(0.8*dataset_len)]
-	test = dataset[int(0.8*dataset_len):]
-	dataset_dir = "MIMIC_CXR_dataset/"
-	os.makedirs(dataset_dir, exist_ok=True)
-	joblib.dump((dataset,word_bag), dataset_dir+"dataset.pkl")
-	joblib.dump((train,word_bag), dataset_dir+"train.pkl")
-	joblib.dump((val,word_bag), dataset_dir+"val.pkl")
-	joblib.dump((test,word_bag), dataset_dir+"test.pkl")
+	# data(csv) files root
+	dataroot = './'
+	# dataroot = '/shared/rsaas/jialong2/physionet.org_depre/files/mimic-cxr-jpg/2.0.0/'
+	# load csv files: split, metadata, chexpert
+	df_split = pd.read_csv(dataroot+"mimic-cxr-2.0.0-split.csv")
+	df_metadata = pd.read_csv(dataroot+"mimic-cxr-2.0.0-metadata.csv")
+	df_metadata = df_metadata[['dicom_id', 'subject_id', 'study_id', 'ViewPosition']]
+	df_chexpert = pd.read_csv(dataroot+"mimic-cxr-2.0.0-chexpert.csv")
+	# df_split:377110 df_metadata:377110 df_chexpert:227827
+	print("df_split:{} df_metadata:{} df_chexpert:{}".format(len(df_split), len(df_metadata), len(df_chexpert)))
+
+	# merge csv files
+	df_spl_meta = pd.merge(df_split, df_metadata, on=["dicom_id", "subject_id", "study_id"], how="left")
+	df_merge = pd.merge(df_spl_meta, df_chexpert, on=["subject_id", "study_id"], how="left")
+
+	# filter csv files for ViewPosition = PA
+	df_merge = df_merge.loc[df_merge['ViewPosition'] == 'PA']
+	del df_merge['ViewPosition']
+	# filter csv files for < 15000000 (optional)
+	df_merge = df_merge.loc[df_merge['subject_id'] < 15000000]
+	# df_merge: 47882
+	print("df_merge:{}".format(len(df_merge)))
+
+
+	# add reports column
+	# report file root
+	rptroot = dataroot+'mimic-cxr-reports/files'
+	for i, row in df_merge.iterrows():
+		rpt_path = os.path.join(rptroot, 'p'+str(row['subject_id'])[:2], 'p'+str(row['subject_id']), 's'+str(row['study_id'])+'.txt')
+		f = open(rpt_path, 'r')
+		report_raw = f.read()
+		idx_fdg = report_raw.find("FINDINGS:")
+		idx_impr = report_raw.find("IMPRESSION:")
+		if idx_fdg == -1:
+			start = idx_impr + len("IMPRESSION:")
+			findings = '' if idx_impr == -1 else report_raw[start:]
+		else:
+			start = idx_fdg + len("FINDINGS:")
+			findings = report_raw[start:] if idx_impr == -1 else report_raw[start:idx_impr]
+		df_merge.at[i,'Text'] = findings
+		if i % 1000 == 0:
+			print('Already process {} reports!'.format(i))
+	# filter csv files for non-empty text
+	# Before: df_train:47019, df_test:459, df_validate:404
+	# After only findings: df_train:9526, df_test:124, df_validate:101 !
+	# After only findings or impression: df_train:45634, df_test:429, df_validate:383
+	df_merge = df_merge.loc[df_merge['Text'] != '']
+	print(df_merge.head(10))
+
+	# splt train, test, valid
+	# merged csv save root
+	saveroot = 'MIMIC_CXR_dataset/'
+	grouped = df_merge.groupby(df_merge.split)
+	for split in ["train", "test", "validate"]:
+		df = grouped.get_group(split)
+		del df['split']
+		df.to_csv(saveroot+split+'.csv', index=False)
+		print("df_{}:{}".format(split, len(df)))
+
 
 if __name__ == '__main__':
 	tic = time.time()

@@ -16,14 +16,21 @@ import matplotlib.animation as animation
 from IPython.display import HTML
 
 from data import Dataset, collate_wrapper
+# from data_depreciated import Dataset, collate_wrapper
 from model import Generator, Discriminator, weights_init
 
 def get_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--epochs', type=int, default=1, help='Number of epochs for training (default=400k)')
-    parser.add_argument('--every_n_epoch', type=int, default=1)
-    parser.add_argument('--batch_size', type=int, default=4, help="Batch size (default=512)")
-    parser.add_argument('--learning_rate', type=float, default=5e-4)
+    parser.add_argument('--epochs', type=int, default=5, help='Number of epochs for training (emixer default=400k)')
+    parser.add_argument('--batch_size', type=int, default=64, help="Batch size (emixer default=512)")
+    parser.add_argument('--nz', type=int, default=100, help="Size of z latent vector (emixer default=120)")
+    parser.add_argument('--ngf', type=int, default=32, help="Size of feature maps in generator")
+    parser.add_argument('--ndf', type=int, default=32, help="Size of feature maps in discriminator")
+    parser.add_argument('--beta1', type=float, default=0.5, help="(emixer default=default)")
+    parser.add_argument('--lr_D', type=float, default=0.0002, help="Learning rate for optimizers discriminator (emixer default=2e-4)")
+    parser.add_argument('--lr_G', type=float, default=0.0002, help="Learning rate for optimizers generator (emixer default=5e-5)")
+    parser.add_argument('--discIter', type=int, default=1, help="(emixer default=2)")
+    parser.add_argument('--genIter', type=int, default=3, help="(emixer default=1)")
     parser.add_argument('--run', default='', help='Continue training on runX. Eg. --run=run1')
     args = parser.parse_args()
     args.dataset = "MIMIC_CXR_dataset/"
@@ -47,41 +54,35 @@ def run_training(args, dataset, train_loader):
     ngpu = torch.cuda.device_count()
     device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
     # Create the generator
-    netG = Generator(vocab_size=dataset.vocab_size).to(device)
+    netG = Generator(vocab_size=dataset.vocab_size, nz=args.nz, ngf=args.ngf).to(device)
     # Create the Discriminator
-    netD = Discriminator(vocab_size=dataset.vocab_size).to(device)
+    netD = Discriminator(vocab_size=dataset.vocab_size, ndf=args.ndf).to(device)
     # Handle multi-gpu if desired
     if (device.type == 'cuda') and (ngpu > 1):
         print("Let's use", ngpu, "GPUs!")
         netG = nn.DataParallel(netG, list(range(ngpu)))
         netD = nn.DataParallel(netD, list(range(ngpu)))
-    netG.apply(weights_init)
-    netD.apply(weights_init)
+    netG.apply(weights_init) # dcgan
+    netD.apply(weights_init) # dcgan
 
-    nz = 120
-    # lr_D = 2e-4
-    # lr_G = 5e-5
-    lr_D = 0.0002 # dcgan
-    lr_G = 0.0002 # dcgan
     # Initialize BCELoss function
     criterion = nn.BCELoss()
     # Create batch of latent vectors that we will use to visualize
     #  the progression of the generator
-    # fixed_noise = torch.randn(64, nz, 1, 1, device=device)
-    # fixed_clss = torch.zeros((64, 14), device=device)
-    fixed_noise = torch.zeros(4, nz, 1, 1, device=device)
-    for j in range(4):
-        fixed_noise[j][j][0][0] = 1
-    fixed_clss = torch.zeros((4, 14), device=device)
+    fixed_noise = torch.randn(64, args.nz, 1, 1, device=device) # 64
+    fixed_clss = torch.zeros((64, 14), device=device)
+    # fixed_noise = torch.zeros(4, args.nz, 1, 1, device=device)
+    # for j in range(4):
+    #     fixed_noise[j][j][0][0] = 1
+    # fixed_clss = torch.zeros((4, 14), device=device)
     # fixed_clss[:, [1, 3, 9]] = 1
     fixed_clss[:, [8]] = 1
     # Establish convention for real and fake labels during training
     real_label = 1.
     fake_label = 0.
     # Setup Adam optimizers for both G and D
-    beta1 = 0.5 # dcgan
-    optimizerD = optim.Adam(netD.parameters(), lr=lr_D, betas=(beta1, 0.999))
-    optimizerG = optim.Adam(netG.parameters(), lr=lr_G, betas=(beta1, 0.999))
+    optimizerD = optim.Adam(netD.parameters(), lr=args.lr_D, betas=(args.beta1, 0.999))
+    optimizerG = optim.Adam(netG.parameters(), lr=args.lr_G, betas=(args.beta1, 0.999))
 
 
     # Training Loop
@@ -92,9 +93,7 @@ def run_training(args, dataset, train_loader):
     D_G_z_output = []
     D_x_output = []
     iters = 0
-    discIter = 1 # 2
-    genIter = 10
-    print("Starting Training Loop... discIter:{} genIter:{}".format(discIter, genIter))
+    print("Starting Training Loop...")
     # For each epoch
     for epoch in range(args.epochs):
         # For each batch in the dataloader
@@ -103,11 +102,11 @@ def run_training(args, dataset, train_loader):
             real_rpts, real_imgs, real_clss = data[0].to(device), data[1].to(device), data[2].to(device)
             b_size = real_imgs.size(0)
             # Generate batch of latent vectors
-            # noise = torch.randn(b_size, nz, 1, 1, device=device)
-            noise = torch.zeros(b_size, nz, 1, 1, device=device)
-            for j in range(b_size):
-                noise[j][j][0][0] = 1
-            for k in range(discIter):
+            noise = torch.randn(b_size, args.nz, 1, 1, device=device)
+            # noise = torch.zeros(b_size, args.nz, 1, 1, device=device)
+            # for j in range(b_size):
+            #     noise[j][j][0][0] = 1
+            for k in range(args.discIter):
                 ############################
                 # (1) Update D network: maximize log(D(x)) + log(1 - D(G(z)))
                 ###########################
@@ -145,7 +144,7 @@ def run_training(args, dataset, train_loader):
                 # Update D
                 optimizerD.step()
 
-            for k in range(genIter):
+            for k in range(args.genIter):
                 ############################
                 # (2) Update G network: maximize log(D(G(z)))
                 ###########################
@@ -184,7 +183,7 @@ def run_training(args, dataset, train_loader):
                 img_list.append(vutils.make_grid(fake, padding=2, normalize=True))
             iters += 1
         # save model
-        if epoch % 10 == 0 or epoch == args.epochs-1:
+        if epoch % 1 == 0 or epoch == args.epochs-1:
             torch.save({
             'epoch': epoch+1,
             'G model_state_dict': netG.state_dict(),
@@ -195,71 +194,76 @@ def run_training(args, dataset, train_loader):
             'args': vars(args)
             }, checkpoint_path)
 
+            args_file = open(args.checkpoint_path+'/args.txt', "w")
+            args_file.write("run:{} i_epoch:{} epochs:{} batch:{} discIter:{} genIter:{} nz:{} ndf:{} ngf:{} lr_D:{} lr_G:{} beta1:{}".format(
+                                args.run, epoch, args.epochs, args.batch_size, args.discIter, args.genIter,
+                                        args.nz, args.ndf, args.ngf, args.lr_D, args.lr_G, args.beta1))
+            args_file.close()
 
-    plt.figure(figsize=(10,5))
-    plt.title("Generator and Discriminator Loss During Training")
-    plt.plot(G_losses,label="G")
-    plt.plot(D_losses,label="D")
-    plt.xlabel("iterations")
-    plt.ylabel("Loss")
-    plt.legend()
-    # plt.show()
-    plt.savefig(args.checkpoint_path+'/training_loss.png')
+            plt.figure(figsize=(10,5))
+            plt.title("Generator and Discriminator Loss During Training")
+            plt.plot(G_losses,label="G")
+            plt.plot(D_losses,label="D")
+            plt.xlabel("iterations")
+            plt.ylabel("Loss")
+            plt.legend()
+            # plt.show()
+            plt.savefig(args.checkpoint_path+'/training_loss.png')
 
-    plt.figure(figsize=(10,5))
-    plt.title("Generator and Discriminator output During Training")
-    plt.plot(D_G_z_output,label="D_G_z")
-    plt.plot(D_x_output,label="D_x")
-    plt.xlabel("iterations")
-    plt.ylabel("Output")
-    plt.legend()
-    # plt.show()
-    plt.savefig(args.checkpoint_path+'/training_output.png')
-
-
-    #%%capture
-    fig = plt.figure(figsize=(8,8))
-    plt.axis("off")
-    ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
-    ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
-    HTML(ani.to_jshtml())
-    plt.show()
-    # ani.save(args.checkpoint_path+'/animation.gif', writer='imagemagick') # comment out when runned on server
-    # for idx, img in enumerate(img_list):
-    #     plt.figure(figsize=(10,5))
-    #     plt.imshow(np.transpose(img,(1,2,0)))
-    #     plt.savefig(args.checkpoint_path+'/{}.jpg'.format(idx))
+            plt.figure(figsize=(10,5))
+            plt.title("Generator and Discriminator output During Training")
+            plt.plot(D_G_z_output,label="D_G_z")
+            plt.plot(D_x_output,label="D_x")
+            plt.xlabel("iterations")
+            plt.ylabel("Output")
+            plt.legend()
+            # plt.show()
+            plt.savefig(args.checkpoint_path+'/training_output.png')
 
 
-    # Grab a batch of real images from the dataloader
-    # real_batch = real_imgs
-    # Plot the real images
-    plt.figure(figsize=(15,15))
-    plt.subplot(1,2,1)
-    plt.axis("off")
-    plt.title("Real Images")
-    plt.imshow(np.transpose(vutils.make_grid(real_imgs.to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
-    # Plot the fake images from the last epoch
-    plt.subplot(1,2,2)
-    plt.axis("off")
-    plt.title("Fake Images")
-    plt.imshow(np.transpose(img_list[-1],(1,2,0)))
-    # plt.show()
-    plt.savefig(args.checkpoint_path+'/real_fake_img.png')
+            #%%capture
+            fig = plt.figure(figsize=(8,8))
+            plt.axis("off")
+            ims = [[plt.imshow(np.transpose(i,(1,2,0)), animated=True)] for i in img_list]
+            ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
+            # HTML(ani.to_jshtml())
+            # plt.show()
+            ani.save(args.checkpoint_path+'/animation.gif', writer='imagemagick') # comment out when runned on server
+            # for idx, img in enumerate(img_list):
+            #     plt.figure(figsize=(10,5))
+            #     plt.imshow(np.transpose(img,(1,2,0)))
+            #     plt.savefig(args.checkpoint_path+'/{}.jpg'.format(idx))
+
+
+            # Grab a batch of real images from the dataloader
+            _ , real_imgs, _ = next(iter(train_loader))
+            # Plot the real images
+            plt.figure(figsize=(15,15))
+            plt.subplot(1,2,1)
+            plt.axis("off")
+            plt.title("Real Images")
+            plt.imshow(np.transpose(vutils.make_grid(real_imgs.to(device)[:64], padding=5, normalize=True).cpu(),(1,2,0)))
+            # Plot the fake images from the last epoch
+            plt.subplot(1,2,2)
+            plt.axis("off")
+            plt.title("Fake Images")
+            plt.imshow(np.transpose(img_list[-1],(1,2,0)))
+            # plt.show()
+            plt.savefig(args.checkpoint_path+'/real_fake_img.png')
 
 def main(args):
     global tic
     tic = time.time()
-    train_dataset = Dataset(args.dataset+"train.pkl")
+    print("dataset processing ...")
+    train_dataset = Dataset(args.dataset+"train.csv") # "train.csv" "test.csv" "validate.csv"
     print("train_dataset len:", len(train_dataset))
-    print("Epoch:{} batch_size:{} learning_rate:{}".format(args.epochs, args.batch_size, args.learning_rate))
-    print("run:", args.run)
-    print("device:", args.device)
-    print("gpu count:", torch.cuda.device_count())
-    print("cpu count:", os.cpu_count())
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=4*torch.cuda.device_count(), collate_fn=collate_wrapper, pin_memory=True)
+    print("epochs:{} batch:{}".format(args.epochs, args.batch_size))
+    print("discIter:{} genIter:{} nz:{} ndf:{} ngf:{} lr_D:{} lr_G:{} beta1:{}".format(args.discIter, args.genIter, args.nz, args.ndf, args.ngf, args.lr_D, args.lr_G, args.beta1))
+    print("run:{} device:{} gpu count:{} cpu count:{}".format(args.run, args.device, torch.cuda.device_count(), os.cpu_count()))
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=4*torch.cuda.device_count(), shuffle=True, collate_fn=collate_wrapper, pin_memory=True)
+    print("train_loader len:", len(train_loader))
     run_training(args, train_dataset, train_loader)
-    print('[{:.2f}] Finish training'.format(time.time() - tic))
+    print('[{:.2f}] Finish training {}'.format(time.time() - tic,  args.run))
 
 if __name__ == '__main__':
     args = get_args()

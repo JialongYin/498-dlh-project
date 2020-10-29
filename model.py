@@ -12,63 +12,108 @@ from utils import *
 from densenet import *
 
 
-# # Root directory for dataset
-# dataroot = "data/celeba"
-#
-# # Number of workers for dataloader
-# workers = 2
+# cDCGAN Generator Code
+class Generator(nn.Module):
+    def __init__(self, vocab_size, nz=100, ny=14, ngf=64, nc=1, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
+        super(Generator, self).__init__()
+        self.nz = nz
+        self.ny = ny
 
-# # Batch size during training
-# batch_size = 4 # 128
+        self.noise_net = nn.Sequential(
+            # input is Z, going into a convolution
+            nn.ConvTranspose2d(nz, ngf * 4, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(ngf * 4),
+            nn.ReLU(True)
+        )
+        self.class_net = nn.Sequential(
+            # input is Y, going into a convolution
+            nn.ConvTranspose2d(ny, ngf * 4, 4, 1, 0, bias=False),
+            nn.BatchNorm2d(ngf * 4),
+            nn.ReLU(True)
+        )
 
-# # Spatial size of training images. All images will be resized to this
-# #   size using a transformer.
-# image_size = 128 # 64
+        self.main = nn.Sequential(
+            # # input is Z, going into a convolution
+            # nn.ConvTranspose2d(nz, ngf * 8, 4, 1, 0, bias=False),
+            # nn.BatchNorm2d(ngf * 8),
+            # nn.ReLU(True),
+            # state size. (ngf*8) x 4 x 4
+            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 4),
+            nn.ReLU(True),
+            # state size. (ngf*4) x 8 x 8
+            nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf * 2),
+            nn.ReLU(True),
+            # state size. (ngf*2) x 16 x 16
+            nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf),
+            nn.ReLU(True),
+            # state size. (ngf) x 32 x 32
+            nn.ConvTranspose2d( ngf, ngf // 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ngf // 2),
+            nn.ReLU(True),
+            #
+            nn.ConvTranspose2d( ngf // 2, nc, 4, 2, 1, bias=False),
+            nn.Tanh()
+            # state size. (nc) x 64 x 64
+        )
+        print("********cDCGAN*******")
 
-# Number of channels in the training images. For color images this is 3
-# nc = 1 # 3
+    def forward(self, noise, clss):
+        z = self.noise_net(noise)
+        y = self.class_net(clss.view(-1, self.ny, 1, 1))
+        input = torch.cat([z, y], 1)
+        output = self.main(input)
+        return output, None
 
-# Size of z latent vector (i.e. size of generator input)
-# nz = 100 # 120 # 100
+# cDCGAN Discriminator Code
+class Discriminator(nn.Module):
+    def __init__(self, vocab_size, ny=14, ndf=64, nc=1, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
+        super(Discriminator, self).__init__()
+        self.main = nn.Sequential(
+            # input is (nc) x 64 x 64
+            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf) x 32 x 32
+            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 2),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*2) x 16 x 16
+            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 4),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*4) x 8 x 8
+            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 8),
+            nn.LeakyReLU(0.2, inplace=True),
+            # state size. (ndf*8) x 4 x 4
+            nn.Conv2d(ndf * 8, ndf * 16, 4, 2, 1, bias=False),
+            nn.BatchNorm2d(ndf * 16),
+            nn.LeakyReLU(0.2, inplace=True),
+            #
+            # nn.Conv2d(ndf * 16, 1, 4, 1, 0, bias=False),
+            # nn.Sigmoid()
+        )
 
-# Size of feature maps in generator
-# ngf = 32 # 64
+        self.fc = nn.Linear(ndf*16*4*4+14, 1)
 
-# Size of feature maps in discriminator
-# ndf = 32 # 64
-
-# # Number of training epochs
-# num_epochs = 250 # 5
-
-# # Learning rate for optimizers
-# lr = 0.0002
-
-# # Beta1 hyperparam for Adam optimizers
-# beta1 = 0.5
-
-# # Number of GPUs available. Use 0 for CPU mode.
-# ngpu = 1
+    def forward(self, input_imgs, input_rpts, input_clss):
+        batch_size = input_imgs.size(0)
+        output = self.main(input_imgs)
+        output = torch.cat((output.view(batch_size, -1), input_clss), 1)
+        output = F.sigmoid(self.fc(output))
+        return output, None, None
 
 
-# # cDCGAN Generator Code
+# # DCGAN Generator Code
 # class Generator(nn.Module):
-#     def __init__(self, vocab_size, nz=100, ny=14, ngf=64, nc=1, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
+#     def __init__(self, vocab_size, nz=100, ngf=64, nc=1, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
 #         super(Generator, self).__init__()
-#         self.nz = nz
-#         self.ny = ny
-#         self.ylabel=nn.Sequential(
-#             nn.Linear(ny, 1000),
-#             nn.ReLU(True)
-#         )
-#
-#         self.yz=nn.Sequential(
-#             nn.Linear(nz, 200),
-#             nn.ReLU(True)
-#         )
-#
+#         # self.ngpu = ngpu
 #         self.main = nn.Sequential(
 #             # input is Z, going into a convolution
-#             nn.ConvTranspose2d( 1200, ngf * 8, 4, 1, 0, bias=False),
+#             nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 0, bias=False),
 #             nn.BatchNorm2d(ngf * 8),
 #             nn.ReLU(True),
 #             # state size. (ngf*8) x 4 x 4
@@ -92,29 +137,19 @@ from densenet import *
 #             nn.Tanh()
 #             # state size. (nc) x 64 x 64
 #         )
+#         print("********DCGAN*******")
 #
 #     def forward(self, noise, clss):
-#         #mapping noise and class
-#         z=self.yz(noise.view(-1, self.nz))
-#         y=self.ylabel(clss.view(-1, self.ny))
+#         return self.main(noise), None
 #
-#         #mapping concatenated input to the main generator network
-#         input=torch.cat([z,y],1).view(-1,1200,1,1)
-#         output = self.main(input)
-#         return output, None
-#
-# # cDCGAN Discriminator Code
+# # DCGAN Discriminator Code
 # class Discriminator(nn.Module):
-#     def __init__(self, vocab_size, ny=14, ndf=64, nc=1, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
+#     def __init__(self, vocab_size, ndf=64, nc=1, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
 #         super(Discriminator, self).__init__()
-#         self.ylabel=nn.Sequential(
-#             nn.Linear(ny,128*128*1),
-#             nn.ReLU(True)
-#         )
-#
+#         # self.ngpu = ngpu
 #         self.main = nn.Sequential(
 #             # input is (nc) x 64 x 64
-#             nn.Conv2d(nc+1, ndf, 4, 2, 1, bias=False),
+#             nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
 #             nn.LeakyReLU(0.2, inplace=True),
 #             # state size. (ndf) x 32 x 32
 #             nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
@@ -138,80 +173,7 @@ from densenet import *
 #         )
 #
 #     def forward(self, input_imgs, input_rpts, input_clss):
-#         y=self.ylabel(input_clss)
-#         y=y.view(-1,1,128,128)
-#         input=torch.cat([input_imgs,y],1)
-#         output = self.main(input)
-#         return output, None, None
-
-
-# DCGAN Generator Code
-class Generator(nn.Module):
-    def __init__(self, vocab_size, nz=100, ngf=64, nc=1, v_feat_size=512, hidden_size=2*512, word_emb_size=256, max_sen=10, max_word=20):
-        super(Generator, self).__init__()
-        # self.ngpu = ngpu
-        self.main = nn.Sequential(
-            # input is Z, going into a convolution
-            nn.ConvTranspose2d( nz, ngf * 8, 4, 1, 0, bias=False),
-            nn.BatchNorm2d(ngf * 8),
-            nn.ReLU(True),
-            # state size. (ngf*8) x 4 x 4
-            nn.ConvTranspose2d(ngf * 8, ngf * 4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 4),
-            nn.ReLU(True),
-            # state size. (ngf*4) x 8 x 8
-            nn.ConvTranspose2d( ngf * 4, ngf * 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf * 2),
-            nn.ReLU(True),
-            # state size. (ngf*2) x 16 x 16
-            nn.ConvTranspose2d( ngf * 2, ngf, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf),
-            nn.ReLU(True),
-            # state size. (ngf) x 32 x 32
-            nn.ConvTranspose2d( ngf, ngf // 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ngf // 2),
-            nn.ReLU(True),
-            #
-            nn.ConvTranspose2d( ngf // 2, nc, 4, 2, 1, bias=False),
-            nn.Tanh()
-            # state size. (nc) x 64 x 64
-        )
-
-    def forward(self, noise, clss):
-        return self.main(noise), None
-
-# DCGAN Discriminator Code
-class Discriminator(nn.Module):
-    def __init__(self, vocab_size, ndf=64, nc=1, word_emb_size=512, hidden_size=2*512, v_feat_size=512):
-        super(Discriminator, self).__init__()
-        # self.ngpu = ngpu
-        self.main = nn.Sequential(
-            # input is (nc) x 64 x 64
-            nn.Conv2d(nc, ndf, 4, 2, 1, bias=False),
-            nn.LeakyReLU(0.2, inplace=True),
-            # state size. (ndf) x 32 x 32
-            nn.Conv2d(ndf, ndf * 2, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 2),
-            nn.LeakyReLU(0.2, inplace=True),
-            # state size. (ndf*2) x 16 x 16
-            nn.Conv2d(ndf * 2, ndf * 4, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 4),
-            nn.LeakyReLU(0.2, inplace=True),
-            # state size. (ndf*4) x 8 x 8
-            nn.Conv2d(ndf * 4, ndf * 8, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 8),
-            nn.LeakyReLU(0.2, inplace=True),
-            # state size. (ndf*8) x 4 x 4
-            nn.Conv2d(ndf * 8, ndf * 16, 4, 2, 1, bias=False),
-            nn.BatchNorm2d(ndf * 16),
-            nn.LeakyReLU(0.2, inplace=True),
-            #
-            nn.Conv2d(ndf * 16, 1, 4, 1, 0, bias=False),
-            nn.Sigmoid()
-        )
-
-    def forward(self, input_imgs, input_rpts, input_clss):
-        return self.main(input_imgs), None, None
+#         return self.main(input_imgs), None, None
 
 # custom weights initialization called on netG and netD
 def weights_init(m):

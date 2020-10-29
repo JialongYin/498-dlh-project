@@ -255,12 +255,12 @@ def main(args):
     global tic
     tic = time.time()
     print("dataset processing ...")
-    train_dataset = Dataset(args.dataset+"train.csv") # "train.csv" "test.csv" "validate.csv"
+    train_dataset = Dataset(args.dataset+"test.csv") # "train.csv" "test.csv" "validate.csv"
     print("train_dataset len:", len(train_dataset))
     print("epochs:{} batch:{}".format(args.epochs, args.batch_size))
     print("discIter:{} genIter:{} nz:{} ndf:{} ngf:{} lr_D:{} lr_G:{} beta1:{}".format(args.discIter, args.genIter, args.nz, args.ndf, args.ngf, args.lr_D, args.lr_G, args.beta1))
-    print("run:{} device:{} gpu count:{} cpu count:{}".format(args.run, args.device, torch.cuda.device_count(), os.cpu_count()))
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=4*torch.cuda.device_count(), shuffle=True, collate_fn=collate_wrapper, pin_memory=True)
+    print("run:{} device:{} gpu count:{} cpu count:{}".format(args.run, args.device, torch.cuda.device_count(), os.cpu_count())) # , shuffle=True
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=4*torch.cuda.device_count(), collate_fn=collate_wrapper, pin_memory=True)
     print("train_loader len:", len(train_loader))
     run_training(args, train_dataset, train_loader)
     print('[{:.2f}] Finish training {}'.format(time.time() - tic,  args.run))

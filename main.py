@@ -21,6 +21,10 @@ from model import Generator, Discriminator, weights_init
 
 def get_args():
     parser = argparse.ArgumentParser()
+    # group = parser.add_mutually_exclusive_group(required=True)
+    # group.add_argument('--DCGAN', action='store_true')
+    # group.add_argument('--cDCGAN', action='store_true')
+    # group.add_argument('--emixer', action='store_true')
     parser.add_argument('--epochs', type=int, default=5, help='Number of epochs for training (emixer default=400k)')
     parser.add_argument('--batch_size', type=int, default=64, help="Batch size (emixer default=512)")
     parser.add_argument('--nz', type=int, default=100, help="Size of z latent vector (emixer default=120)")
@@ -54,9 +58,11 @@ def run_training(args, dataset, train_loader):
     ngpu = torch.cuda.device_count()
     device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
     # Create the generator
-    netG = Generator(vocab_size=dataset.vocab_size, nz=args.nz, ngf=args.ngf).to(device)
+    # netG = Generator(vocab_size=dataset.vocab_size, nz=args.nz, ngf=args.ngf).to(device)
+    netG = Generator(vocab_size=dataset.vocab_size).to(device)
     # Create the Discriminator
-    netD = Discriminator(vocab_size=dataset.vocab_size, ndf=args.ndf).to(device)
+    # netD = Discriminator(vocab_size=dataset.vocab_size, ndf=args.ndf).to(device)
+    netD = Discriminator(vocab_size=dataset.vocab_size).to(device)
     # Handle multi-gpu if desired
     if (device.type == 'cuda') and (ngpu > 1):
         print("Let's use", ngpu, "GPUs!")
@@ -255,12 +261,12 @@ def main(args):
     global tic
     tic = time.time()
     print("dataset processing ...")
-    train_dataset = Dataset(args.dataset+"test.csv") # "train.csv" "test.csv" "validate.csv"
+    train_dataset = Dataset(args.dataset+"train.csv") # "train.csv" "test.csv" "validate.csv"
     print("train_dataset len:", len(train_dataset))
     print("epochs:{} batch:{}".format(args.epochs, args.batch_size))
     print("discIter:{} genIter:{} nz:{} ndf:{} ngf:{} lr_D:{} lr_G:{} beta1:{}".format(args.discIter, args.genIter, args.nz, args.ndf, args.ngf, args.lr_D, args.lr_G, args.beta1))
     print("run:{} device:{} gpu count:{} cpu count:{}".format(args.run, args.device, torch.cuda.device_count(), os.cpu_count())) # , shuffle=True
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=4*torch.cuda.device_count(), collate_fn=collate_wrapper, pin_memory=True)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, num_workers=4*torch.cuda.device_count(), shuffle=True, collate_fn=collate_wrapper, pin_memory=True)
     print("train_loader len:", len(train_loader))
     run_training(args, train_dataset, train_loader)
     print('[{:.2f}] Finish training {}'.format(time.time() - tic,  args.run))

@@ -53,7 +53,8 @@ def run_evaluation(args, checkpoint, test_dataset):
     dataset_folder_generation(test_dataset)
     device = args.device
     # Create the generator
-    netG = Generator(vocab_size=checkpoint['vocab_size'], nz=checkpoint['args']['nz'], ngf=checkpoint['args']['ngf']).to(device)
+    # netG = Generator(vocab_size=checkpoint['vocab_size'], nz=checkpoint['args']['nz'], ngf=checkpoint['args']['ngf']).to(device)
+    netG = Generator(vocab_size=checkpoint['vocab_size']).to(device)
     netG = nn.DataParallel(netG)
     netG.load_state_dict(checkpoint['G model_state_dict'])
     netG.eval()

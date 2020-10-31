@@ -15,7 +15,7 @@ import tarfile
 
 class Dataset(Dataset):
     def __init__(self, csv_file):
-        self.df = pd.read_csv(csv_file)
+        self.df = pd.read_csv(csv_file)[:4]
         # images file root
         # self.dataroot = 'files'
         self.dataroot = '/shared/rsaas/jialong2/physionet.org_depre/files/mimic-cxr-jpg/2.0.0/files'

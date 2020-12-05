@@ -59,10 +59,10 @@ def run_training(args, dataset, train_loader):
     device = torch.device("cuda:0" if (torch.cuda.is_available() and ngpu > 0) else "cpu")
     # Create the generator
     # netG = Generator(vocab_size=dataset.vocab_size, nz=args.nz, ngf=args.ngf).to(device)
-    netG = Generator(vocab_size=dataset.vocab_size).to(device)
+    netG = Generator(vocab_size=dataset.vocab_size, nz=args.nz, ngf=args.ngf).to(device)
     # Create the Discriminator
     # netD = Discriminator(vocab_size=dataset.vocab_size, ndf=args.ndf).to(device)
-    netD = Discriminator(vocab_size=dataset.vocab_size).to(device)
+    netD = Discriminator(vocab_size=dataset.vocab_size, ndf=args.ndf).to(device)
     # Handle multi-gpu if desired
     if (device.type == 'cuda') and (ngpu > 1):
         print("Let's use", ngpu, "GPUs!")
@@ -234,7 +234,7 @@ def run_training(args, dataset, train_loader):
             ani = animation.ArtistAnimation(fig, ims, interval=1000, repeat_delay=1000, blit=True)
             # HTML(ani.to_jshtml())
             # plt.show()
-            ani.save(args.checkpoint_path+'/animation.gif', writer='imagemagick') # comment out when runned on server
+            # ani.save(args.checkpoint_path+'/animation.gif', writer='imagemagick') # comment out when runned on server
             # for idx, img in enumerate(img_list):
             #     plt.figure(figsize=(10,5))
             #     plt.imshow(np.transpose(img,(1,2,0)))

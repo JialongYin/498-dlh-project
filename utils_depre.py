@@ -1,7 +1,6 @@
 import torch
 import torch.nn as nn
 from torch.autograd import Variable
-import torch.nn.functional as F
 
 
 # Residual block
@@ -13,25 +12,20 @@ class ResBlockUp(nn.Module):
         self.conv1 = deconv4x4(in_channels, out_channels, stride)
         self.condBN2 = CBN(128+20, 128+20, out_channels)
         self.conv2 = deconv3x3(out_channels, out_channels)
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(inplace=True)
         self.downsample = downsample
-
-        self.bn1 = nn.BatchNorm2d(in_channels)
-        self.bn2 = nn.BatchNorm2d(out_channels)
 
     def forward(self, x_clss_tuple):
         x, clss = x_clss_tuple
         # x: batch x ci x h x w
         # class: batch x (128 + 20)
         residual = x
-        # out = self.condBN1(x, clss)
-        out = self.bn1(x)
+        out = self.condBN1(x, clss)
         out = self.relu(out)
         # self.conv1: deconv4x4 ConvTranspose2d(ci, c0, kernel_size=(4, 4), stride=(2, 2), padding=(1, 1), bias=False)
         out = self.conv1(out)
         # out: batch x co x 2h x 2w
-        # out = self.condBN2(out, clss)
-        out = self.bn2(out)
+        out = self.condBN2(out, clss)
         out = self.relu(out)
         # self.conv2: deconv3x3 ConvTranspose2d(c0, c0, kernel_size=(3, 3), stride=(1, 1), padding=(1, 1), bias=False)
         out = self.conv2(out)
@@ -60,22 +54,21 @@ def deconv4x4(in_channels, out_channels, stride=1):
 class ResBlockDown(nn.Module):
     def __init__(self, in_channels, out_channels, stride=1, downsample=None):
         super(ResBlockDown, self).__init__()
-        self.relu = nn.ReLU()
+        self.relu = nn.ReLU(inplace=True)
         self.conv1 = conv3x3(in_channels, out_channels)
-        self.bn1 = nn.BatchNorm2d(out_channels)
+        # self.bn1 = nn.BatchNorm2d(out_channels)
         self.conv2 = conv3x3(out_channels, out_channels, stride)
-        self.bn2 = nn.BatchNorm2d(out_channels)
+        # self.bn2 = nn.BatchNorm2d(out_channels)
         self.downsample = downsample
 
     def forward(self, x):
-        """follow traditional architecture adding batch to prevent D(x)=D(G(z)) during training"""
         residual = x
         out = self.relu(x)
         out = self.conv1(out)
-        out = self.bn1(out)
+        # out = self.bn1(out)
         out = self.relu(out)
         out = self.conv2(out)
-        out = self.bn2(out)
+        # out = self.bn2(out)
         if self.downsample is not None:
             residual = self.downsample(x)
         out += residual
@@ -150,13 +143,13 @@ class CBN(nn.Module):
         # MLP used to predict betas and gammas
         self.fc_gamma = nn.Sequential(
             nn.Linear(self.n_category, self.n_hidden),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(self.n_hidden, self.num_features),
             )
 
         self.fc_beta = nn.Sequential(
             nn.Linear(self.n_category, self.n_hidden),
-            nn.ReLU(),
+            nn.ReLU(inplace=True),
             nn.Linear(self.n_hidden, self.num_features),
             )
 

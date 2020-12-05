@@ -12,13 +12,14 @@ from torchvision.transforms import ToTensor
 import torchvision.transforms.functional as TF
 from torchtext.data import Field, TabularDataset
 import tarfile
+import time
 
 class Dataset(Dataset):
-    def __init__(self, csv_file):
-        self.df = pd.read_csv(csv_file)[:2]
+    def __init__(self, csv_file="MIMIC_CXR_dataset/"+"train.csv"):
+        self.df = pd.read_csv(csv_file)
         # images file root
-        self.dataroot = 'files'
-        # self.dataroot = '/shared/rsaas/jialong2/physionet.org_depre/files/mimic-cxr-jpg/2.0.0/files'
+        # self.dataroot = 'files'
+        self.dataroot = '/shared/rsaas/jialong2/physionet.org_depre/files/mimic-cxr-jpg/2.0.0/files'
         # untar images tar file to dataroot
         # self.dataroot = '/data/jialong2/files'
         # self.tar_path = '/shared/rsaas/jialong2/physionet.org_depre/files/mimic-cxr-jpg/2.0.0/files.tar.gz'
@@ -58,39 +59,28 @@ class Dataset(Dataset):
         img = TF.resize(img, (self.img_size, self.img_size))
         img = TF.to_tensor(img)
 
-        # get report text
-        rpt_idx, rpt_len = self.TEXT.process([self.train_dataset[idx].text])
-        rpt_idx = rpt_idx.squeeze(0)
+        # # get report text
+        # rpt_idx, rpt_len = self.TEXT.process([self.train_dataset[idx].text])
+        # rpt_idx = rpt_idx.squeeze(0)
+        #
+        # # get cls
+        # cls_series = row[3:-1]
+        # cls = torch.tensor(cls_series.where(cls_series > 0, 0)).float()
+        # return rpt_idx, img, rpt_len, cls
+        return img
 
-        # get cls
-        cls_series = row[3:-1]
-        cls = torch.tensor(cls_series.where(cls_series > 0, 0)).float()
-        return rpt_idx, img, rpt_len, cls
+def main():
+    global tic
+    tic = time.time()
+    print("dataset processing ...")
+    train_dataset = Dataset()
+    for i, img in enumerate(train_dataset):
+        img = img.repeat(3, 1, 1)
+        img = TF.to_pil_image(img)
+        img.save("x_rays/"+"{}.jpg".format(i))
+        if i % 1000 == 0:
+            print(i)
+    print('[{:.2f}] Finish training'.format(time.time() - tic))
 
-# def collate_wrapper(batch):
-#     rpts, imgs, rpt_lens, clss = list(zip(*batch))
-#     rpts_batch = pad_sequence(rpts, batch_first=True)
-#     imgs_batch = torch.stack(imgs)
-#     labels_batch = torch.stack(clss)
-#     rpt_lens, sort_index = torch.sort(torch.tensor(rpt_lens), descending=True)
-#
-#     rpts_batch = pack_padded_sequence(rpts_batch[sort_index], rpt_lens, batch_first=True)
-#     imgs_batch = imgs_batch[sort_index]
-#     labels_batch = labels_batch[sort_index]
-#     return rpts_batch.float(), imgs_batch.float(), labels_batch.float()
-
-def collate_wrapper(batch):
-    # rpts list: batch x variale rpt length
-    rpts, imgs, rpt_lens, clss = list(zip(*batch))
-    # rpts_batch: batch x max rpt length
-    rpts_batch = pad_sequence(rpts, batch_first=True, padding_value=1)
-
-    imgs_batch = torch.stack(imgs)
-    labels_batch = torch.stack(clss)
-    rpt_lens, sort_index = torch.sort(torch.tensor(rpt_lens), descending=True)
-
-    # rpts_batch = pack_padded_sequence(rpts_batch[sort_index], rpt_lens, batch_first=True)
-    rpts_batch = rpts_batch[sort_index]
-    imgs_batch = imgs_batch[sort_index]
-    labels_batch = labels_batch[sort_index]
-    return rpts_batch, imgs_batch.float(), labels_batch.float()
+if __name__ == '__main__':
+    main()
